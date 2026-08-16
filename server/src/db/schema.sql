@@ -10,7 +10,10 @@ CREATE TABLE IF NOT EXISTS clinician (
   email         TEXT NOT NULL UNIQUE,
   -- scrypt hash, never the password itself
   password_hash TEXT NOT NULL,
-  password_salt TEXT NOT NULL
+  password_salt TEXT NOT NULL,
+  -- Incremented to invalidate every token already issued to this clinician.
+  -- Signing out bumps it, which is what makes a stateless token revocable.
+  token_version INTEGER NOT NULL DEFAULT 1
 );
 
 /*
@@ -29,6 +32,9 @@ CREATE TABLE IF NOT EXISTS clinic (
   website       TEXT NOT NULL DEFAULT '',
   -- Data URI. Kept in the database so a clinic install needs no file storage.
   logo          TEXT,
+  -- Chrome only. Urgency colours are not clinic-configurable.
+  brand_dark    TEXT NOT NULL DEFAULT '',
+  brand_light   TEXT NOT NULL DEFAULT '',
   updated_at    TEXT
 );
 

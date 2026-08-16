@@ -124,6 +124,10 @@ const SELF_RECORDING = new Set([
   'PUT /settings',
   'POST /pronunciations',
   'DELETE /pronunciations/:id',
+  'PUT /thresholds/:name',
+  'DELETE /thresholds/:name',
+  'POST /auth/signup',
+  'POST /installation/go-live',
 ]);
 
 export function auditTrail(req: Request, res: Response, next: NextFunction): void {

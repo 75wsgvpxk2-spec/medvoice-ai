@@ -1645,41 +1645,6 @@ tbody tr:hover { background: var(--brand-wash); }
   letter-spacing: -0.01em;
 }
 
-.auth-points {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: var(--gap-4);
-}
-
-.auth-points li {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr);
-  gap: var(--gap-3);
-  align-items: start;
-}
-
-.auth-bullet {
-  width: 8px;
-  height: 8px;
-  margin-top: 7px;
-  border-radius: 50%;
-  background: var(--brand-glow);
-}
-
-.auth-points strong {
-  display: block;
-  font-size: var(--text-base);
-  font-weight: 600;
-}
-
-.auth-points p {
-  margin: 2px 0 0;
-  font-size: var(--text-sm);
-  color: rgba(255, 255, 255, 0.78);
-}
-
 .auth-panel {
   display: flex;
   align-items: center;
@@ -1953,6 +1918,11 @@ tbody tr:hover { background: var(--brand-wash); }
    for a real one is the moment this system stops being safe to use. */
 
 .demo-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--gap-3);
+  flex-wrap: wrap;
   padding: var(--gap-2) var(--gap-6);
   background: var(--watch-ground);
   border-bottom: 1px solid var(--watch-line);
@@ -1968,3 +1938,164 @@ tbody tr:hover { background: var(--brand-wash); }
   border-radius: var(--radius-sm);
   background: rgb(255 255 255 / 60%);
 }
+
+/* Clinic colours ------------------------------------------------------------- */
+
+.colour-input {
+  width: 56px;
+  height: 38px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.brand-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-3);
+  flex-wrap: wrap;
+  padding: var(--gap-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.brand-preview-bar {
+  width: 90px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-gradient);
+  flex: none;
+}
+
+.brand-preview-button {
+  padding: 7px 16px;
+  border-radius: var(--radius);
+  background: var(--brand-gradient);
+  color: #fff;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.brand-preview-note {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+/* Patient report ------------------------------------------------------------- */
+
+.dialog.wide {
+  max-width: 860px;
+  width: 100%;
+}
+
+.report-page {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: var(--gap-5);
+  max-height: 60vh;
+  overflow-y: auto;
+  font-family: var(--font-clinical);
+  line-height: 1.55;
+}
+
+.report-page h1 { font-size: var(--text-xl); margin: 0 0 var(--gap-3); }
+.report-page h2 {
+  font-size: var(--text-base);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  margin: var(--gap-5) 0 var(--gap-2);
+}
+.report-page h3 { font-size: var(--text-base); margin: var(--gap-4) 0 var(--gap-2); }
+.report-page p { margin: 0 0 var(--gap-2); }
+.report-page ul { margin: 0 0 var(--gap-3); padding-left: var(--gap-4); }
+.report-page li.sub { list-style: none; color: var(--ink-muted); font-size: var(--text-sm); }
+.report-page table { width: 100%; border-collapse: collapse; margin-bottom: var(--gap-3); }
+.report-page th, .report-page td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+.report-page hr { border: 0; border-top: 1px solid var(--line); margin: var(--gap-4) 0; }
+
+.report-json {
+  margin: 0;
+  padding: var(--gap-4);
+  max-height: 60vh;
+  overflow: auto;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* Printing --------------------------------------------------------------------
+   The report is the only thing that should reach paper. Everything else — the
+   sidebar, the banner, the dialog chrome — is navigation, and a clinician
+   handing a summary to a patient should not be handing them a screenshot. */
+
+@media print {
+  body { background: #fff; }
+
+  .sidebar,
+  .agent-strip,
+  .demo-banner,
+  .no-print,
+    .scrim > *:not(.dialog) {
+    display: none !important;
+  }
+
+  .shell { display: block; }
+
+  .scrim {
+    position: static;
+    background: none;
+    padding: 0;
+    display: block;
+    overflow: visible;
+  }
+
+  .dialog {
+    box-shadow: none;
+    border: 0;
+    max-width: none;
+    max-height: none;
+    padding: 0;
+  }
+
+  .dialog > h2 { display: none; }
+
+  .report-page,
+  .report-json {
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    padding: 0;
+  }
+
+  .report-page h2 { break-after: avoid; }
+  .report-page table { break-inside: avoid; }
+}
+
+/* AI usage ------------------------------------------------------------------- */
+
+.usage-bars {
+  display: grid;
+  gap: var(--gap-3);
+}
+
+.usage-bar .spread {
+  font-size: var(--text-sm);
+  margin-bottom: 4px;
+}
+
+.usage-bar .fill-live { background: var(--brand-gradient); }
+.usage-bar .fill-cache { background: var(--managed); }
+.usage-bar .fill-local { background: var(--stable); }

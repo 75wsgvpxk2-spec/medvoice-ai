@@ -22,7 +22,7 @@ import type {
   AuditEvent,
   Pronunciation,
 } from '../../../shared/types.ts';
-import { EMPTY_PROFILE } from '../../../shared/types.ts';
+import { EMPTY_PROFILE, DEFAULT_BRAND } from '../../../shared/types.ts';
 
 /* ------------------------------------------------------------------ rows -- */
 
@@ -200,7 +200,9 @@ function toRun(r: Row): AgentRun {
 /* ------------------------------------------------------------- clinician -- */
 
 export const clinicians = {
-  byEmail(email: string): (Clinician & { passwordHash: string; passwordSalt: string }) | null {
+  byEmail(
+    email: string,
+  ): (Clinician & { passwordHash: string; passwordSalt: string; tokenVersion: number }) | null {
     const r = db().prepare('SELECT * FROM clinician WHERE email = ?').get(email) as Row | undefined;
     if (!r) return null;
     return {
@@ -210,7 +212,28 @@ export const clinicians = {
       email: r['email'] as string,
       passwordHash: r['password_hash'] as string,
       passwordSalt: r['password_salt'] as string,
+      tokenVersion: (r['token_version'] as number) ?? 1,
     };
+  },
+
+  count(): number {
+    const r = db().prepare('SELECT COUNT(*) AS n FROM clinician').get() as Row;
+    return (r['n'] as number) ?? 0;
+  },
+
+  /** The version every token for this clinician must carry to still be valid. */
+  tokenVersion(clinicianId: string): number | null {
+    const r = db()
+      .prepare('SELECT token_version FROM clinician WHERE id = ?')
+      .get(clinicianId) as Row | undefined;
+    return r ? ((r['token_version'] as number) ?? 1) : null;
+  },
+
+  /** Invalidates every token already issued to this clinician. */
+  revokeSessions(clinicianId: string): void {
+    db()
+      .prepare('UPDATE clinician SET token_version = token_version + 1 WHERE id = ?')
+      .run(clinicianId);
   },
 
   byId(clinicianId: string): Clinician | null {
@@ -245,6 +268,7 @@ const EMPTY_CLINIC: Clinic = {
   email: '',
   website: '',
   logo: null,
+  ...DEFAULT_BRAND,
   updatedAt: null,
 };
 
@@ -261,6 +285,8 @@ export const clinic = {
       email: (r['email'] as string) ?? '',
       website: (r['website'] as string) ?? '',
       logo: (r['logo'] as string | null) ?? null,
+      brandDark: (r['brand_dark'] as string) || DEFAULT_BRAND.brandDark,
+      brandLight: (r['brand_light'] as string) || DEFAULT_BRAND.brandLight,
       updatedAt: (r['updated_at'] as string | null) ?? null,
     };
   },
@@ -268,13 +294,15 @@ export const clinic = {
   save(input: Omit<Clinic, 'updatedAt'>): Clinic {
     db()
       .prepare(
-        `INSERT INTO clinic (id, name, legal_name, registration, address, phone, email, website, logo, updated_at)
-         VALUES ('clinic',?,?,?,?,?,?,?,?,?)
+        `INSERT INTO clinic (id, name, legal_name, registration, address, phone, email, website, logo,
+                              brand_dark, brand_light, updated_at)
+         VALUES ('clinic',?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name, legal_name = excluded.legal_name,
            registration = excluded.registration, address = excluded.address,
            phone = excluded.phone, email = excluded.email,
            website = excluded.website, logo = excluded.logo,
+           brand_dark = excluded.brand_dark, brand_light = excluded.brand_light,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -286,6 +314,8 @@ export const clinic = {
         input.email,
         input.website,
         input.logo,
+        input.brandDark,
+        input.brandLight,
         now(),
       );
     return clinic.get();
@@ -1037,3 +1067,49 @@ export const pronunciations = {
     db().prepare('DELETE FROM pronunciation WHERE id = ?').run(pronunciationId);
   },
 };
+
+/* ------------------------------------------------------- clinical wipe -- */
+
+/**
+ * Removes every clinical record, leaving the installation itself intact.
+ *
+ * Used when a clinic finishes evaluating on the demo population and starts
+ * entering real patients. The fictional records have to go — the alternative is
+ * fictional and real patients sitting in one database looking identical, which
+ * is the failure this system is built to avoid.
+ *
+ * Deliberately kept: the clinician account, the clinic profile and branding,
+ * settings, voice training, and the audit trail. The audit trail especially —
+ * a record of what happened that can be erased by the thing it records is not
+ * an audit trail.
+ */
+export function wipeClinicalData(): { removed: Record<string, number> } {
+  const conn = db();
+  // Children before parents. A foreign key violation here would abort the
+  // transaction and leave the clinic stuck between two modes.
+  const tables = [
+    'billing_entry',
+    '"order"',
+    'documentation_alert',
+    'risk_flag',
+    'observation',
+    'encounter',
+    'patient',
+    'population_run',
+    'agent_run',
+    'model_call',
+    'agent_cache',
+  ];
+
+  const removed: Record<string, number> = {};
+  const wipe = conn.transaction(() => {
+    for (const table of tables) {
+      const before = (conn.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as Row)['n'] as number;
+      conn.prepare(`DELETE FROM ${table}`).run();
+      if (before > 0) removed[table.replace(/"/g, '')] = before;
+    }
+  });
+  wipe();
+
+  return { removed };
+}

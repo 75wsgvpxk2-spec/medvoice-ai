@@ -23,12 +23,22 @@ export interface SeedResult {
 }
 
 /** Wipes and reloads the seed population. Safe to run repeatedly. */
-export function seed(): SeedResult {
+/**
+ * Loads the fictional demo population.
+ *
+ * With no arguments it also creates the demo clinician from the environment,
+ * which is what `npm run seed:demo` wants. Passing an existing clinician id
+ * attaches the population to that account instead and leaves the clinician
+ * table alone — which is what sign-up needs, since the account was created a
+ * moment earlier and must survive.
+ */
+export function seed(options: { clinicianId?: string } = {}): SeedResult {
   // Refuses outright if this database belongs to a clinic. Placed before the
   // first write so running the script directly cannot bypass it.
   assertDemoSeedAllowed();
 
   const conn = db();
+  const attachToExisting = Boolean(options.clinicianId);
 
   // Child rows before parents. population_run references clinician, so the
   // clinician cannot go first — on a database that has had a population run,
@@ -42,21 +52,29 @@ export function seed(): SeedResult {
     DELETE FROM encounter;
     DELETE FROM population_run;
     DELETE FROM patient;
-    DELETE FROM clinician;
     DELETE FROM agent_run;
     DELETE FROM agent_cache;
   `);
 
-  const clinicianId = SEED_CLINICIAN.key;
-  const { hash, salt } = hashPassword(config.clinicianPassword);
-  clinicians.insert({
-    id: clinicianId,
-    name: SEED_CLINICIAN.name,
-    credentials: SEED_CLINICIAN.credentials,
-    email: config.clinicianEmail,
-    passwordHash: hash,
-    passwordSalt: salt,
-  });
+  let clinicianId: string;
+  if (attachToExisting) {
+    clinicianId = options.clinicianId!;
+  } else {
+    // Only the standalone seed replaces the clinician; sign-up's account has
+    // already been created and deleting it here would sign the clinic out of
+    // the installation it just made.
+    conn.exec('DELETE FROM clinician');
+    clinicianId = SEED_CLINICIAN.key;
+    const { hash, salt } = hashPassword(config.clinicianPassword);
+    clinicians.insert({
+      id: clinicianId,
+      name: SEED_CLINICIAN.name,
+      credentials: SEED_CLINICIAN.credentials,
+      email: config.clinicianEmail,
+      passwordHash: hash,
+      passwordSalt: salt,
+    });
+  }
 
   let encounterCount = 0;
   let observationCount = 0;

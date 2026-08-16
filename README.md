@@ -48,38 +48,41 @@ that will be running last decade's guidance.
 
 ## Getting your own instance
 
-### Running the demo
-
-Fifteen fictional patients, chosen to exercise the hard cases: dengue with
-progression markers, sickle cell with a rising crisis pattern, diabetes with
-declining kidney function, and several patients the system must **not** flag.
-
 ```bash
 npm install
 cp .env.example .env
-npm run seed:demo
 npm run dev
 ```
 
-Sign in with the credentials in `.env`. Every screen is labelled as demo data.
+Open http://localhost:5173. An installation with no account yet offers **create
+your clinic** rather than a sign-in — name your clinic, pick a password, and you
+land in a working system with fifteen fictional patients to look at. They are
+chosen to exercise the hard cases: dengue with progression markers, sickle cell
+with a rising crisis pattern, diabetes with declining kidney function, and
+several patients the system must **not** flag.
 
-### Setting up a real clinic
+Every screen is labelled as demo data while you are in it.
 
-```bash
-npm install
-cp .env.example .env
-npm run setup
-npm run dev
-```
+### Starting real records
 
-`npm run setup` asks for your clinic name and creates one sign-in with a
-generated password, shown once. **No patients are created.**
+When you are ready, **Start real records** in the demo banner deletes every
+fictional patient and switches the installation over. Your clinic profile,
+branding, settings, voice training and audit trail are kept.
 
-The two paths are mutually exclusive, deliberately. A clinic that tried the demo
-and then started entering real patients would have fictional and real records
-sitting in one database looking identical — so loading the demo population into
-a clinic database is refused, and setting up a clinic on top of demo data is
-refused. Moving from one to the other means `npm run db:reset` first.
+The demo has to go rather than sit alongside real records. Fictional and real
+patients in one list stop being tellable apart within a week, and that is the
+mistake this product exists to prevent — so the switch is one-way, and loading
+the demo population back into a clinic database is refused.
+
+Prefer a terminal, or installing without a browser? `npm run setup` creates an
+empty clinic directly, and `npm run seed:demo` loads the fictional population.
+
+### Making it yours
+
+**Clinic profile** takes your logo and two brand colours, which repaint the
+sidebar, buttons and headings across the whole interface. Urgency colours are
+deliberately not configurable: red means critical here, and a clinic that could
+recolour it could make a hypertensive crisis look routine.
 
 ### With Docker
 
@@ -128,7 +131,7 @@ Vitest. Hand-written CSS. No ORM, no component library, no state manager — see
 
 | Command | What it does |
 |---|---|
-| `npm run setup` | First-run setup for a clinic — empty database, your own sign-in |
+| `npm run setup` | Create an empty clinic from the terminal, instead of signing up in the browser |
 | `npm run seed:demo` | Loads the 15-patient fictional population |
 | `npm run dev` | Server and client together; sign in at http://localhost:5173 |
 | `npm start` | Production server |
@@ -184,8 +187,8 @@ are small.
 5. **Agent output is not verified against the record.** The model can assert
    something about a patient's history that is not in it. Treat any agent
    statement as a prompt to look, not as a finding.
-6. **Sessions are held in memory** and there is one clinician account. Both are
-   fine for a single-clinician pilot and inadequate for a practice.
+6. **There is one clinician account**, with no roles and no password reset flow.
+   Fine for a single-clinician pilot, inadequate for a practice.
 
 ---
 

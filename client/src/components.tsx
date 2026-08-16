@@ -147,10 +147,13 @@ export function Dialog({
   title,
   onClose,
   children,
+  wide = false,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  /** For content that is read rather than answered — a report, not a prompt. */
+  wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -166,7 +169,7 @@ export function Dialog({
   return (
     <div className="scrim" onClick={onClose}>
       <div
-        className="dialog stack"
+        className={`dialog stack ${wide ? 'wide' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

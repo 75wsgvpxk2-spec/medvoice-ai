@@ -90,6 +90,7 @@ function ModelSection({
   const s = view.settings;
   const [key, setKey] = useState('');
   const [model, setModel] = useState(s.model);
+  const [baseUrl, setBaseUrl] = useState(s.baseUrl);
 
   const live = s.provider === 'deterministic' ? false : s.hasApiKey;
 
@@ -178,6 +179,32 @@ function ModelSection({
             </button>
           )}
         </div>
+      </div>
+
+      <div>
+        <label htmlFor="set-base">Endpoint</label>
+        <div className="row">
+          <input
+            id="set-base"
+            value={baseUrl}
+            placeholder="https://api.anthropic.com (default)"
+            onChange={(e) => setBaseUrl(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <button
+            className="quiet"
+            disabled={saving || baseUrl.trim() === s.baseUrl}
+            onClick={() => onSave({ baseUrl: baseUrl.trim() }, 'the endpoint')}
+          >
+            Save
+          </button>
+        </div>
+        <p className="hint">
+          Leave blank for Anthropic's API. Point it at anything that speaks the same protocol — your
+          own gateway, a regional endpoint where data residency requires one, or a proxy in front of
+          another provider. The key above is sent to whatever this names, so only use an endpoint
+          you control.
+        </p>
       </div>
     </section>
   );
@@ -817,6 +844,7 @@ function ClinicSection({
   saving: boolean;
 }) {
   const [days, setDays] = useState(String(settings.followUpIntervalDays));
+  const [hours, setHours] = useState(String(settings.sessionHours));
 
   return (
     <section className="card stack">
@@ -845,6 +873,32 @@ function ClinicSection({
           </div>
           <p className="hint">
             How long a patient can go without contact before the queue treats them as overdue.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="set-session">Session length, in hours</label>
+          <div className="row">
+            <input
+              id="set-session"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={720}
+              value={hours}
+              onChange={(e) => setHours(e.target.value)}
+            />
+            <button
+              className="quiet"
+              disabled={saving || Number(hours) === settings.sessionHours}
+              onClick={() => onSave({ sessionHours: Number(hours) }, 'the session length')}
+            >
+              Save
+            </button>
+          </div>
+          <p className="hint">
+            How long a sign-in lasts before it must be repeated. Signing out ends every session
+            immediately, including any opened on another machine.
           </p>
         </div>
 

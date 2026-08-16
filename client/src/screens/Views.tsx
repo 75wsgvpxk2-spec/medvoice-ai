@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import type { AgentRun } from '../../../shared/types';
-import { api, ApiError, type PatientPage } from '../api';
+import { api, ApiError, type PatientPage, type SpendSummary, type Transparency } from '../api';
 import { StatusMarker, ErrorState, EmptyState } from '../components';
 import { Logo } from '../components/Logo';
 import { AGENT_LABELS } from '../lib/stream';
@@ -13,12 +13,35 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // An installation with no account yet offers sign-up instead of sign-in.
+  // Assume an account exists until told otherwise, so a failed check never
+  // shows a stranger the create-account form.
+  const [hasAccount, setHasAccount] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [clinicName, setClinicName] = useState('');
+  const [name, setName] = useState('');
+  const [credentials, setCredentials] = useState('');
+
+  useEffect(() => {
+    api
+      .authStatus()
+      .then((r) => {
+        setHasAccount(r.hasAccount);
+        setCreating(!r.hasAccount);
+      })
+      .catch(() => setHasAccount(true));
+  }, []);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      await api.login(email, password);
+      if (creating) {
+        await api.signup({ clinicName, name, credentials, email, password });
+      } else {
+        await api.login(email, password);
+      }
       onSignedIn();
     } catch (err) {
       // Errors name what went wrong, never vague.
@@ -35,29 +58,6 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
         <div className="auth-brand-inner">
           <Logo height={34} onBrand />
           <h1>Clinical intelligence for the whole caseload, not one visit at a time.</h1>
-          <ul className="auth-points">
-            <li>
-              <span className="auth-bullet" aria-hidden="true" />
-              <div>
-                <strong>Four named agents</strong>
-                <p>Every result says which agent produced it and why.</p>
-              </div>
-            </li>
-            <li>
-              <span className="auth-bullet" aria-hidden="true" />
-              <div>
-                <strong>Voice-first encounters</strong>
-                <p>Speak the note; the structure follows.</p>
-              </div>
-            </li>
-            <li>
-              <span className="auth-bullet" aria-hidden="true" />
-              <div>
-                <strong>Nothing decided for you</strong>
-                <p>Nothing is ordered, prescribed or diagnosed without your approval.</p>
-              </div>
-            </li>
-          </ul>
         </div>
       </aside>
 
@@ -67,11 +67,44 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
             <span className="auth-mark">
               <Logo height={30} />
             </span>
-            <h2>Sign in</h2>
-            <p className="hint">Use the account your clinic issued you.</p>
+            <h2>{creating ? 'Create your clinic' : 'Sign in'}</h2>
+            <p className="hint">
+              {creating
+                ? 'Starts with a demo population so you can look around. No real records until you say so.'
+                : 'Use the account your clinic issued you.'}
+            </p>
           </div>
 
           {error && <div className="error" role="alert">{error}</div>}
+
+          {creating && (
+            <>
+              <div>
+                <label htmlFor="clinic-name">Clinic name</label>
+                <input
+                  id="clinic-name"
+                  value={clinicName}
+                  onChange={(e) => setClinicName(e.target.value)}
+                  placeholder="Bay Street Clinic"
+                />
+              </div>
+              <div className="field-pair">
+                <div>
+                  <label htmlFor="your-name">Your name</label>
+                  <input id="your-name" value={name} onChange={(e) => setName(e.target.value)} />
+                </div>
+                <div>
+                  <label htmlFor="your-credentials">Credentials</label>
+                  <input
+                    id="your-credentials"
+                    value={credentials}
+                    onChange={(e) => setCredentials(e.target.value)}
+                    placeholder="MBBS"
+                  />
+                </div>
+              </div>
+            </>
+          )}
 
           <div>
             <label htmlFor="email">Email</label>
@@ -95,9 +128,25 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
+          {creating && (
+            <p className="hint">At least 10 characters. There is no password reset, so keep it.</p>
+          )}
+
           <button className="primary auth-submit" type="submit" disabled={busy}>
-            {busy ? 'Signing in…' : 'Sign in'}
+            {busy
+              ? creating
+                ? 'Creating…'
+                : 'Signing in…'
+              : creating
+                ? 'Create clinic'
+                : 'Sign in'}
           </button>
+
+          {hasAccount && creating && (
+            <button className="link" type="button" onClick={() => setCreating(false)}>
+              Sign in instead
+            </button>
+          )}
         </form>
       </main>
     </div>
@@ -364,7 +413,8 @@ export function PopulationList({
 
 export function AgentActivity({ onBack }: { onBack: () => void }) {
   const [runs, setRuns] = useState<AgentRun[] | null>(null);
-  const [spend, setSpend] = useState<{ totalCostUsd: number; totalCalls: number; liveCalls: number } | null>(null);
+  const [spend, setSpend] = useState<SpendSummary | null>(null);
+  const [transparency, setTransparency] = useState<Transparency | null>(null);
   const [filter, setFilter] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -376,6 +426,7 @@ export function AgentActivity({ onBack }: { onBack: () => void }) {
       .then((r) => {
         setRuns(r.runs);
         setSpend(r.spend);
+        setTransparency(r.transparency);
       })
       .catch((e: ApiError) => setError(e.message));
   };
@@ -405,6 +456,9 @@ export function AgentActivity({ onBack }: { onBack: () => void }) {
       </div>
 
       {error && <ErrorState message={error} onRetry={load} />}
+
+      {transparency && spend && <AiTransparency t={transparency} spend={spend} />}
+
       {runs && runs.length === 0 && <EmptyState title="No agent has run yet." />}
 
       {runs && runs.length > 0 && (
@@ -541,6 +595,179 @@ export function AgentActivity({ onBack }: { onBack: () => void }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * What the AI is, where it goes, and how much of the output came from it.
+ *
+ * Everything here is read from the call log rather than from configuration, so
+ * it says what happened rather than what was intended. The distinction matters:
+ * a clinic can have a live model configured and still be reading sentences the
+ * local engine wrote, if the model was unreachable when the agent ran.
+ */
+function AiTransparency({ t, spend }: { t: Transparency; spend: SpendSummary }) {
+  const [open, setOpen] = useState(false);
+  const live = t.configuredProvider === 'anthropic';
+
+  return (
+    <section className="card stack">
+      <div className="spread">
+        <h2>AI usage</h2>
+        <span className={`pill ${live ? 'pill-live' : ''}`}>
+          {live ? t.configuredModel : 'Local engine — no model calls'}
+        </span>
+      </div>
+
+      <dl className="facts">
+        <div>
+          <dt>Engine</dt>
+          <dd>{live ? `Claude · ${t.configuredModel}` : 'Deterministic, on this machine'}</dd>
+        </div>
+        <div>
+          <dt>Endpoint</dt>
+          <dd className="tabular">{live ? t.endpoint : 'No network calls'}</dd>
+        </div>
+        <div>
+          <dt>Key source</dt>
+          <dd>
+            {t.keySource === 'settings'
+              ? 'Stored in Settings'
+              : t.keySource === 'environment'
+                ? 'Server environment'
+                : 'None set'}
+          </dd>
+        </div>
+        <div>
+          <dt>Dictation</dt>
+          <dd>{t.transcription === 'assemblyai' ? 'AssemblyAI' : 'Browser speech'}</dd>
+        </div>
+      </dl>
+
+      {/* Where the words actually came from. A cached or local answer is not a
+          model answer, and a clinician reading a flag deserves to know which. */}
+      <div className="usage-bars">
+        <UsageBar label="Answered live by the model" value={spend.liveCalls} total={spend.totalCalls} tone="live" />
+        <UsageBar label="Served from cache" value={spend.cachedCalls} total={spend.totalCalls} tone="cache" />
+        <UsageBar
+          label="Answered by the local engine"
+          value={spend.deterministicCalls}
+          total={spend.totalCalls}
+          tone="local"
+        />
+      </div>
+
+      {t.degraded > 0 && (
+        <div className="error">
+          <strong>{t.degraded} call{t.degraded === 1 ? '' : 's'} fell back to the local engine.</strong>{' '}
+          A live model is configured but was unreachable — check the key and its credit balance in
+          Settings. The system kept working; the wording of those results is encoded, not written by
+          a model.
+        </div>
+      )}
+
+      <button className="link" onClick={() => setOpen((v) => !v)}>
+        {open ? 'Hide the detail' : 'Show tokens, cost and models used'}
+      </button>
+
+      {open && (
+        <div className="stack">
+          <dl className="facts">
+            <div>
+              <dt>Input tokens</dt>
+              <dd className="tabular">{spend.inputTokens.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Output tokens</dt>
+              <dd className="tabular">{spend.outputTokens.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Cache reads</dt>
+              <dd className="tabular">{spend.cacheReadTokens.toLocaleString()}</dd>
+            </div>
+            <div>
+              <dt>Total cost</dt>
+              <dd className="tabular">${spend.totalCostUsd.toFixed(4)}</dd>
+            </div>
+          </dl>
+
+          {t.models.length > 0 && (
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Provider</th>
+                    <th className="tabular">Calls</th>
+                    <th className="tabular">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {t.models.map((m) => (
+                    <tr key={`${m.model}-${m.provider}`}>
+                      <td className="tabular">{m.model}</td>
+                      <td>{m.provider}</td>
+                      <td className="tabular">{m.calls}</td>
+                      <td className="tabular">${m.costUsd.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {spend.byAgent.length > 0 && (
+            <div style={{ overflowX: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    <th className="tabular">Calls</th>
+                    <th className="tabular">Cost</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spend.byAgent.map((a) => (
+                    <tr key={a.agent}>
+                      <td>{AGENT_LABELS[a.agent as keyof typeof AGENT_LABELS] ?? a.agent}</td>
+                      <td className="tabular">{a.calls}</td>
+                      <td className="tabular">${a.costUsd.toFixed(4)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function UsageBar({
+  label,
+  value,
+  total,
+  tone,
+}: {
+  label: string;
+  value: number;
+  total: number;
+  tone: 'live' | 'cache' | 'local';
+}) {
+  const percent = total > 0 ? Math.round((value / total) * 100) : 0;
+  return (
+    <div className="usage-bar">
+      <div className="spread">
+        <span>{label}</span>
+        <strong className="tabular">
+          {value} <span className="hint">({percent}%)</span>
+        </strong>
+      </div>
+      <div className="bar">
+        <span className={`fill-${tone}`} style={{ width: `${percent}%` }} />
+      </div>
     </div>
   );
 }

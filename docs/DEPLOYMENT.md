@@ -71,8 +71,8 @@ The server serves the built client itself in production, so only one port is
 exposed.
 
 Run it under a supervisor that restarts on failure — systemd, or `pm2`. Sessions
-are held in memory, so every restart signs everyone out; that is a known
-limitation rather than a misconfiguration.
+survive a restart provided `SESSION_SECRET` is set in `.env`; if it is left
+unset the server generates a new one each boot and everyone is signed out.
 
 ---
 
@@ -183,11 +183,11 @@ under **Agent activity** and **Audit trail**.
 Worth knowing before you commit to it:
 
 - **One clinician account.** No roles, no second user, no password reset flow.
+- **No idle timeout.** A session lasts its configured lifetime whether used or not.
 - **No multi-tenancy.** One clinic per installation.
 - **No encryption at rest** and no audit-log tamper protection beyond file
   permissions.
 - **No rate limiting**, including on sign-in.
-- **Sessions do not survive a restart.**
 
 Each of these is a contribution waiting to happen; see
 [`CONTRIBUTING.md`](../CONTRIBUTING.md).

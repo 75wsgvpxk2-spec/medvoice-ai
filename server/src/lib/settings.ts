@@ -1,5 +1,6 @@
 import { settings as store } from '../db/repositories.ts';
 import { config } from './config.ts';
+import { DEFAULT_SESSION_HOURS } from './auth.ts';
 import {
   DEFAULT_SETTINGS,
   type ClinicSettings,
@@ -22,6 +23,7 @@ const KEYS = {
   provider: 'model.provider',
   model: 'model.id',
   apiKey: 'model.apiKey',
+  baseUrl: 'model.baseUrl',
   transcription: 'transcription.provider',
   transcriptionModel: 'transcription.model',
   transcriptionKey: 'transcription.assemblyaiKey',
@@ -29,6 +31,7 @@ const KEYS = {
   keywords: 'dictation.keywords',
   followUp: 'clinic.followUpIntervalDays',
   agentStrip: 'ui.showAgentStrip',
+  sessionHours: 'auth.sessionHours',
 } as const;
 
 function read<T>(key: string, fallback: T): T {
@@ -41,6 +44,11 @@ export function apiKey(): string | null {
   const stored = read<string | null>(KEYS.apiKey, null);
   if (stored && stored.trim()) return stored.trim();
   return config.anthropicApiKey;
+}
+
+/** Empty string means "Anthropic's own API", which is what the SDK defaults to. */
+export function baseUrl(): string {
+  return (read<string>(KEYS.baseUrl, '') ?? '').trim();
 }
 
 export function modelId(): string {
@@ -84,6 +92,12 @@ export function activeTranscription(): TranscriptionProvider {
   return 'browser';
 }
 
+/** How long a sign-in lasts before it must be repeated. */
+export function sessionHours(): number {
+  const stored = read<number>(KEYS.sessionHours, DEFAULT_SESSION_HOURS);
+  return Number.isFinite(stored) && stored >= 1 && stored <= 720 ? stored : DEFAULT_SESSION_HOURS;
+}
+
 export function units(): UnitPreferences {
   return { ...DEFAULT_SETTINGS.units, ...read<Partial<UnitPreferences>>(KEYS.units, {}) };
 }
@@ -103,6 +117,7 @@ export function current(): ClinicSettings {
   return {
     provider: read<ClinicSettings['provider']>(KEYS.provider, DEFAULT_SETTINGS.provider),
     model: modelId(),
+    baseUrl: baseUrl(),
     hasApiKey: Boolean(effective),
     // Enough to recognise which key is loaded, never enough to use it.
     apiKeyHint: effective ? `…${effective.slice(-4)}` : '',
@@ -113,6 +128,7 @@ export function current(): ClinicSettings {
     transcriptionKeyHint: transcriptionKey() ? `…${transcriptionKey()!.slice(-4)}` : '',
     keywords: keywords(),
     followUpIntervalDays: followUpIntervalDays(),
+    sessionHours: sessionHours(),
     showAgentStrip: read<boolean>(KEYS.agentStrip, DEFAULT_SETTINGS.showAgentStrip),
     requireDismissalReason: true,
     updatedAt: store.updatedAt(),

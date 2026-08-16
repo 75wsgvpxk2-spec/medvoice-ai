@@ -56,19 +56,26 @@ export interface AgentCallResult<T> {
 
 let client: Anthropic | null = null;
 let clientKey: string | null = null;
+let clientBase: string | null = null;
 
 function anthropic(): Anthropic {
   const key = settings.apiKey();
-  // Rebuild when the key changes: a clinic that pastes a new key in Settings
-  // must not keep talking to the old one through a cached client.
-  if (!client || clientKey !== key) {
+  const base = settings.baseUrl();
+  // Rebuild when the key or the endpoint changes: a clinic that pastes a new
+  // key, or points at its own gateway, must not keep talking to the old one
+  // through a cached client.
+  if (!client || clientKey !== key || clientBase !== base) {
     client = new Anthropic({
       apiKey: key ?? undefined,
+      // Undefined rather than an empty string: the SDK treats '' as a real base
+      // URL and every request would 404 against it.
+      baseURL: base || undefined,
       // OR-7 handles the retry surface itself so a retry is visible in the run
       // log rather than hidden inside the SDK.
       maxRetries: 1,
     });
     clientKey = key;
+    clientBase = base;
   }
   return client;
 }
@@ -157,7 +164,47 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
     return { output, provider: 'deterministic', cached: false, durationMs, costUsd: 0 };
   }
 
-  const response = await anthropic().messages.create(
+  /**
+   * Falls back to the local engine when the model cannot be reached at all.
+   *
+   * PF-3 asks for a network failure not to lose the encounter, and the same
+   * answer covers the cases that turn out to matter just as much in practice:
+   * a key that is wrong, a key whose account has run out of credit, a rate
+   * limit, or the API being down. All of them used to take the whole system
+   * with them — which left a clinic with a bad key strictly worse off than one
+   * with no key at all, since the no-key path has always worked.
+   *
+   * Deliberately NOT caught: a refusal, or output that will not parse. Those
+   * mean the model answered and the answer was unusable, which is a different
+   * problem and has to stay visible rather than be papered over with a local
+   * result the clinician would not know was local.
+   */
+  const degrade = (reason: string) => {
+    const output = options.deterministic();
+    const durationMs = Date.now() - startedAt;
+    console.error(`MODEL UNAVAILABLE (${options.agent}): ${reason} — used the local engine`);
+    recordCall({
+      agent: options.agent,
+      provider: 'deterministic',
+      model: 'deterministic',
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      durationMs,
+      cached: false,
+    });
+    if (options.cacheKey) writeCache(options.cacheKey, options.agent, output);
+    return {
+      output,
+      provider: 'deterministic' as const,
+      cached: false,
+      durationMs,
+      costUsd: 0,
+      degradedReason: reason,
+    };
+  };
+
+  let response: Anthropic.Message;
+  try {
+    response = await anthropic().messages.create(
     {
       model: settings.modelId(),
       // Thinking is on by default on Opus 5 and counts against this ceiling,
@@ -178,7 +225,12 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
       },
     },
     { timeout: options.timeoutMs ?? 60_000 },
-  );
+    );
+  } catch (error) {
+    const reason = unavailableReason(error);
+    if (reason) return degrade(reason);
+    throw error;
+  }
 
   // Claude Opus 5 can decline a request; content is empty or partial when it
   // does, so this is checked before anything reads a content block.
@@ -266,3 +318,26 @@ export async function phase0TestCall(): Promise<{
 }
 
 export { id as newId };
+
+/**
+ * Names why the model could not be reached, or null when the error is
+ * something else entirely and must be allowed to propagate.
+ */
+function unavailableReason(error: unknown): string | null {
+  const status = (error as { status?: number })?.status;
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (status === 401 || status === 403) return 'the API key was rejected';
+  // An exhausted balance comes back as a 400, not a payment status, so the
+  // message is the only thing separating it from a genuinely malformed request
+  // — which must not be swallowed.
+  if (status === 400 && /credit balance is too low/i.test(message)) {
+    return 'the account has run out of credit';
+  }
+  if (status === 429) return 'the request was rate limited';
+  if (typeof status === 'number' && status >= 500) return `the API returned ${status}`;
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|fetch failed|aborted|timed? ?out/i.test(message)) {
+    return 'the API could not be reached';
+  }
+  return null;
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { DismissalReason, Patient, RiskFlag } from '../../../shared/types';
 import { api, ApiError, type PatientRecord, type ResolutionPreview, type ResolutionOutcome } from '../api';
 import { StatusMarker, EmptyState, ErrorState, Dialog, UrgencyWord, daysWord } from '../components';
+import { PatientReport } from '../components/Report';
 
 /** Section 8.3 — patient detail. */
 
@@ -42,6 +43,7 @@ export function PatientDetail({
   /* 8.3: only the affected alert shows progress; the rest stays usable (UI-6). */
   const [busyAlertId, setBusyAlertId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [reporting, setReporting] = useState(false);
 
   const load = () => {
     setError(null);
@@ -100,9 +102,12 @@ export function PatientDetail({
             <span>{daysWord(daysSinceLastApproved(record))}</span>
           </div>
         </div>
-        <button className="primary" onClick={onNewEncounter}>
-          New encounter
-        </button>
+        <div className="row">
+          <button onClick={() => setReporting(true)}>Summary</button>
+          <button className="primary" onClick={onNewEncounter}>
+            New encounter
+          </button>
+        </div>
       </div>
 
       <PatientDetails patient={patient} />
@@ -284,6 +289,14 @@ export function PatientDetail({
           ))
         )}
       </section>
+
+      {reporting && patient && (
+        <PatientReport
+          patientId={patient.id}
+          patientName={patient.name}
+          onClose={() => setReporting(false)}
+        />
+      )}
 
       {/* 8.6: tapping an alert shows exactly what it will do before it does it. */}
       {preview && (

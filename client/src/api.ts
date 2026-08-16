@@ -164,6 +164,28 @@ export interface ThresholdRow {
   override: ThresholdOverride | null;
 }
 
+export interface SpendSummary {
+  totalCalls: number;
+  liveCalls: number;
+  deterministicCalls: number;
+  cachedCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  totalCostUsd: number;
+  byAgent: Array<{ agent: string; calls: number; costUsd: number }>;
+}
+
+export interface Transparency {
+  configuredProvider: 'anthropic' | 'deterministic';
+  configuredModel: string;
+  endpoint: string;
+  keySource: 'settings' | 'environment' | 'none';
+  transcription: 'browser' | 'assemblyai';
+  models: Array<{ model: string; provider: string; calls: number; costUsd: number }>;
+  degraded: number;
+}
+
 export interface SettingsView {
   settings: ClinicSettings;
   apiKeySource: 'settings' | 'environment' | 'none';
@@ -214,6 +236,18 @@ export const api = {
   login: (email: string, password: string) =>
     post<{ clinician: Clinician }>('/auth/login', { email, password }),
   logout: () => post<{ ok: true }>('/auth/logout'),
+  authStatus: () => request<{ hasAccount: boolean }>('/auth/status'),
+  signup: (input: {
+    clinicName: string;
+    name: string;
+    credentials: string;
+    email: string;
+    password: string;
+  }) =>
+    post<{ clinician: Clinician; installation: { mode: 'demo' | 'clinic' } }>('/auth/signup', input),
+  goLive: (confirm: string) =>
+    post<{ mode: 'clinic'; removed: Record<string, number> }>('/installation/go-live', { confirm }),
+
   me: () =>
     request<{ clinician: Clinician; installation: { mode: 'demo' | 'clinic' } }>('/auth/me'),
 
@@ -241,6 +275,10 @@ export const api = {
     return request<PatientPage>(`/patients${suffix ? `?${suffix}` : ''}`);
   },
   patient: (id: string) => request<PatientRecord>(`/patients/${id}`),
+  report: (id: string, format: 'markdown' | 'fhir') =>
+    request<{ markdown: string; patientName: string } | Record<string, unknown>>(
+      `/patients/${id}/report?format=${format}`,
+    ),
   createPatient: (input: {
     name: string;
     age: number;
@@ -292,7 +330,7 @@ export const api = {
   completeOrder: (orderId: string) => post<{ order: Order }>(`/orders/${orderId}/complete`),
 
   agentRuns: (agent?: string) =>
-    request<{ runs: AgentRun[]; spend: { totalCostUsd: number; totalCalls: number; liveCalls: number } }>(
+    request<{ runs: AgentRun[]; spend: SpendSummary; transparency: Transparency }>(
       `/agent-runs${agent ? `?agent=${agent}` : ''}`,
     ),
 };

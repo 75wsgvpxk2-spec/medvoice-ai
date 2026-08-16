@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Clinic } from '../../../shared/types';
+import { DEFAULT_BRAND } from '../../../shared/types';
+import { previewBranding } from '../lib/branding';
 import { api, ApiError } from '../api';
 import { ErrorState } from '../components';
 import { Logo } from '../components/Logo';
@@ -13,6 +15,7 @@ const BLANK: Omit<Clinic, 'updatedAt'> = {
   email: '',
   website: '',
   logo: null,
+  ...DEFAULT_BRAND,
 };
 
 /**
@@ -131,6 +134,71 @@ export function ClinicProfile({ onSaved }: { onSaved: (clinic: Clinic) => void }
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="card stack">
+        <h2>Colours</h2>
+        <p className="hint">
+          Used for the sidebar, buttons and headings. Changes preview immediately and apply
+          everywhere once saved.
+        </p>
+
+        <div className="field-pair">
+          <div>
+            <label htmlFor="c-dark">Primary</label>
+            <div className="row">
+              <input
+                id="c-dark"
+                type="color"
+                className="colour-input"
+                value={form.brandDark}
+                onChange={(e) => {
+                  set('brandDark', e.target.value);
+                  previewBranding(e.target.value, form.brandLight);
+                }}
+              />
+              <span className="tabular hint">{form.brandDark}</span>
+            </div>
+          </div>
+          <div>
+            <label htmlFor="c-light">Accent</label>
+            <div className="row">
+              <input
+                id="c-light"
+                type="color"
+                className="colour-input"
+                value={form.brandLight}
+                onChange={(e) => {
+                  set('brandLight', e.target.value);
+                  previewBranding(form.brandDark, e.target.value);
+                }}
+              />
+              <span className="tabular hint">{form.brandLight}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="brand-preview" aria-hidden="true">
+          <span className="brand-preview-bar" />
+          <span className="brand-preview-button">Button</span>
+          <span className="brand-preview-note">
+            Urgency colours are not affected — critical stays red everywhere.
+          </span>
+        </div>
+
+        <div className="row">
+          <button
+            type="button"
+            className="link"
+            onClick={() => {
+              set('brandDark', DEFAULT_BRAND.brandDark);
+              set('brandLight', DEFAULT_BRAND.brandLight);
+              previewBranding(DEFAULT_BRAND.brandDark, DEFAULT_BRAND.brandLight);
+            }}
+          >
+            Reset to the default palette
+          </button>
         </div>
       </div>
 

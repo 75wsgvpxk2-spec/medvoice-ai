@@ -22,16 +22,21 @@ vulnerability rather than a bug — even if it looks minor.
   so the AssemblyAI key never reaches the client.
 - **`.env` and `data/*.db` are gitignored.** Check before you commit anyway.
 - **Session cookies are `httpOnly`** and signed with `SESSION_SECRET`. Set that
-  to a long random value in any deployment — the default is a per-boot random
-  string, which signs everyone out on restart.
+  to a long random value in any deployment: if it is unset the server generates
+  one per boot, which signs everyone out on restart.
+- **Tokens carry an issue time and a version.** They expire after a configurable
+  lifetime, and signing out increments the clinician's token version, which
+  invalidates every token already issued — including any captured from a shared
+  machine. Changing `SESSION_SECRET` invalidates all of them at once.
 
 ## Known limitations
 
 These are design limits of the current build, not vulnerabilities. They are
 listed here so nobody has to discover them the hard way.
 
-- **Sessions are held in memory.** A restart signs everyone out. There is no
-  session revocation beyond restarting the process.
+- **One session lifetime for everyone**, set in Settings and defaulting to 12
+  hours. There is no idle timeout — a session lasts its full length whether or
+  not it is used.
 - **One clinician account per installation.** There is no role model, no
   per-user permissions, and no account lockout after failed sign-ins.
 - **No encryption at rest.** The SQLite database is a plain file. If it holds

@@ -21,6 +21,7 @@ import { stdin, stdout } from 'node:process';
 import { randomBytes } from 'node:crypto';
 import { clinicians, clinic as clinicRepo, audit } from '../server/src/db/repositories.ts';
 import { hashPassword } from '../server/src/lib/auth.ts';
+import { DEFAULT_BRAND } from '../shared/types.ts';
 import { db, closeDb, id } from '../server/src/db/index.ts';
 import {
   assertSetupAllowed,
@@ -106,6 +107,7 @@ async function main(): Promise<void> {
     email,
     website: '',
     logo: null,
+    ...DEFAULT_BRAND,
   });
 
   recordInstallation('clinic');

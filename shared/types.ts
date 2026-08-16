@@ -350,8 +350,21 @@ export interface Clinic {
   website: string;
   /** Data URI, or null to fall back to the MedVoice mark. */
   logo: string | null;
+  /**
+   * Chrome colours only — the sidebar, buttons and headings.
+   *
+   * Urgency colours are deliberately NOT clinic-configurable. Red means
+   * critical in this system and must not be recolourable into meaning
+   * something else, which is the one place Section 9's "colour carries
+   * clinical meaning and nothing else" is load-bearing rather than stylistic.
+   */
+  brandDark: string;
+  brandLight: string;
   updatedAt: string | null;
 }
+
+/** Falls back to the MedVoice palette when a clinic has not chosen its own. */
+export const DEFAULT_BRAND = { brandDark: '#0f3355', brandLight: '#2f92d6' } as const;
 
 // ---------------------------------------------------------------------------
 // Section 4 — Agent run log
@@ -546,6 +559,12 @@ export interface ClinicSettings {
   /** 'auto' uses the live model when a key is present, the local engine when not. */
   provider: ModelProvider;
   model: string;
+  /**
+   * Where the model requests go. Empty means Anthropic's own API. Anything
+   * Anthropic-compatible works: a self-hosted gateway, a regional endpoint for
+   * data-residency rules, or a proxy in front of another provider.
+   */
+  baseUrl: string;
   /** True when a key is stored. The key itself is never sent to the client. */
   hasApiKey: boolean;
   /** Last four characters only, so a clinician can tell which key is loaded. */
@@ -561,6 +580,8 @@ export interface ClinicSettings {
   keywords: string[];
   /** Days after which a patient with no contact is treated as overdue. */
   followUpIntervalDays: number;
+  /** How long a sign-in lasts before it must be repeated. */
+  sessionHours: number;
   /** Show the agent strip along the foot of every screen. */
   showAgentStrip: boolean;
   /** Require a reason before a flag can be dismissed. Off is not offered. */
@@ -574,11 +595,13 @@ export const DEFAULT_SETTINGS: Omit<
 > = {
   provider: 'auto',
   model: 'claude-opus-5',
+  baseUrl: '',
   units: { glucose: 'mg/dL', weight: 'kg', height: 'cm', temperature: '°C' },
   transcription: 'browser',
   transcriptionModel: 'universal-3-5-pro',
   keywords: [],
   followUpIntervalDays: 365,
+  sessionHours: 12,
   showAgentStrip: true,
   requireDismissalReason: true,
 };

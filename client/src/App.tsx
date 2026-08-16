@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Clinician, QueueView, Patient } from '../../shared/types';
 import { api, ApiError, type ApprovalOutcome } from './api';
 import { useClinicStream } from './lib/stream';
-import { AgentStrip } from './components';
+import { AgentStrip, Dialog } from './components';
 import { Queue } from './screens/Queue';
 import { PatientDetail } from './screens/Patient';
 import { NewEncounter } from './screens/Encounter';
 import { Login, PopulationList, AgentActivity } from './screens/Views';
 import { NewPatient } from './screens/NewPatient';
 import { Logo } from './components/Logo';
+import { applyBranding } from './lib/branding';
 import { ClinicProfile } from './screens/ClinicProfile';
 import { Dashboard } from './screens/Dashboard';
 import { Flags } from './screens/Flags';
@@ -48,6 +49,7 @@ export function App() {
   // Demo until the server says otherwise: an unlabelled demo is how fictional
   // data gets mistaken for real data, so the safer default is to label it.
   const [demoMode, setDemoMode] = useState(true);
+  const [goingLive, setGoingLive] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('mv-rail', railed ? '1' : '0');
@@ -84,7 +86,13 @@ export function App() {
     if (!clinician) return;
     loadQueue();
     // The clinic's own mark replaces the product mark once one is uploaded.
-    api.clinic().then((r) => setClinic(r.clinic)).catch(() => setClinic(null));
+    api
+      .clinic()
+      .then((r) => {
+        setClinic(r.clinic);
+        applyBranding(r.clinic);
+      })
+      .catch(() => setClinic(null));
     api.settings().then((r) => setShowStrip(r.settings.showAgentStrip)).catch(() => setShowStrip(true));
   }, [clinician, loadQueue]);
 
@@ -249,9 +257,27 @@ export function App() {
       <div className="workspace">
       {demoMode && (
         <div className="demo-banner" role="status">
-          <strong>Demo data.</strong> Every patient in this database is fictional. To run a real
-          clinic, wipe it and run <code>npm run setup</code>.
+          <span>
+            <strong>Demo data.</strong> Every patient here is fictional. Explore freely — nothing in
+            this database is a real record.
+          </span>
+          <button className="quiet" onClick={() => setGoingLive(true)}>
+            Start real records
+          </button>
         </div>
+      )}
+
+      {goingLive && (
+        <GoLiveDialog
+          onClose={() => setGoingLive(false)}
+          onDone={() => {
+            setGoingLive(false);
+            setDemoMode(false);
+            // Everything on screen was demo data a moment ago.
+            loadQueue();
+            setRoute({ name: 'population' });
+          }}
+        />
       )}
       <main className="main">
         {route.name === 'dashboard' && (
@@ -321,7 +347,14 @@ export function App() {
 
         {route.name === 'settings' && <Settings />}
 
-        {route.name === 'clinic' && <ClinicProfile onSaved={setClinic} />}
+        {route.name === 'clinic' && (
+          <ClinicProfile
+            onSaved={(saved) => {
+              setClinic(saved);
+              applyBranding(saved);
+            }}
+          />
+        )}
 
         {route.name === 'activity' && <AgentActivity onBack={() => setRoute({ name: 'queue' })} />}
       </main>
@@ -460,3 +493,74 @@ const IconSignOut = () => (
     <line x1="21" y1="12" x2="9" y2="12" />
   </svg>
 );
+
+/**
+ * Leaving the demo behind.
+ *
+ * Typing the phrase is not friction for its own sake: this deletes every
+ * patient in the database, and a clinic that clicks it by accident on a Friday
+ * loses whatever they had been entering. The confirmation names what goes and
+ * what stays, because "are you sure?" tells nobody anything.
+ */
+function GoLiveDialog({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const PHRASE = 'DELETE DEMO DATA';
+
+  const go = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.goLive(confirm);
+      onDone();
+    } catch (e) {
+      setError((e as ApiError).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog title="Start using real patient records" onClose={onClose}>
+      <p className="reasoning">
+        This deletes every demo patient and their whole history — encounters, flags, alerts, orders
+        and billing. It cannot be undone.
+      </p>
+      <p className="reasoning">
+        Your clinic profile, branding, settings, voice training and audit trail are kept.
+      </p>
+      <p className="hint">
+        The demo has to go rather than sit alongside real records. Fictional and real patients in
+        one list stop being tellable apart within a week, and that is the mistake this product
+        exists to prevent.
+      </p>
+
+      {error && <div className="error">{error}</div>}
+
+      <div>
+        <label htmlFor="go-live-confirm">
+          Type <strong>{PHRASE}</strong> to confirm
+        </label>
+        <input
+          id="go-live-confirm"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          autoComplete="off"
+        />
+      </div>
+
+      <div className="row">
+        <button
+          className="primary"
+          onClick={go}
+          disabled={busy || confirm.trim().toUpperCase() !== PHRASE}
+        >
+          {busy ? 'Deleting…' : 'Delete demo data and start'}
+        </button>
+        <button onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+      </div>
+    </Dialog>
+  );
+}

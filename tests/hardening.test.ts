@@ -1,10 +1,16 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { submitEncounter, approveEncounter, runPopulation } from '../server/src/orchestration/triggers.ts';
 import { resolveAlert } from '../server/src/agents/resolution.ts';
-import { patients, alerts, runs, flags } from '../server/src/db/repositories.ts';
+import { patients, alerts, runs, flags, clinicians } from '../server/src/db/repositories.ts';
 import { summariseSpend } from '../server/src/model/spend.ts';
 import { db } from '../server/src/db/index.ts';
-import { hashPassword, verifyPassword, makeSessionToken, readSessionToken } from '../server/src/lib/auth.ts';
+import {
+  hashPassword,
+  verifyPassword,
+  makeSessionToken,
+  readSessionToken,
+  isExpired,
+} from '../server/src/lib/auth.ts';
 import { freshPopulation, patientNamed, sampleNote, CLINICIAN_ID, AS_OF, PROFILE } from './helpers.ts';
 
 /** Section 14.10 — performance, caching, spend, and auth. */
@@ -150,11 +156,46 @@ describe('Auth and per-clinician scoping', () => {
   });
 
   it('rejects a tampered session token', () => {
-    const token = makeSessionToken(CLINICIAN_ID);
-    expect(readSessionToken(token)).toBe(CLINICIAN_ID);
+    const token = makeSessionToken(CLINICIAN_ID, 1);
+    expect(readSessionToken(token)?.clinicianId).toBe(CLINICIAN_ID);
     expect(readSessionToken(`${CLINICIAN_ID}.deadbeef`)).toBeNull();
     expect(readSessionToken('nonsense')).toBeNull();
     expect(readSessionToken(undefined)).toBeNull();
+
+    // Re-signing a token with a different clinician id must not validate: the
+    // signature covers the whole payload, not just the trailing segment.
+    const forged = token.replace(CLINICIAN_ID, 'clin_someone_else');
+    expect(readSessionToken(forged)).toBeNull();
+  });
+
+  it('survives a restart but not its own expiry', () => {
+    // Stateless by design: nothing is held in memory, so a token minted by one
+    // process validates in the next. That is what stops a server reload from
+    // signing the clinic out.
+    const token = makeSessionToken(CLINICIAN_ID, 1);
+    const claims = readSessionToken(token);
+    expect(claims).not.toBeNull();
+    expect(isExpired(claims!, 12)).toBe(false);
+
+    // An hour-old token against a lifetime measured in hours is still fine;
+    // the same token against a zero lifetime is not.
+    expect(isExpired({ ...claims!, issuedAt: Date.now() - 2 * 3_600_000 }, 12)).toBe(false);
+    expect(isExpired({ ...claims!, issuedAt: Date.now() - 13 * 3_600_000 }, 12)).toBe(true);
+  });
+
+  it('revokes every issued token when the clinician signs out', () => {
+    const before = clinicians.tokenVersion(CLINICIAN_ID)!;
+    const token = readSessionToken(makeSessionToken(CLINICIAN_ID, before))!;
+    expect(token.tokenVersion).toBe(before);
+
+    clinicians.revokeSessions(CLINICIAN_ID);
+    const after = clinicians.tokenVersion(CLINICIAN_ID)!;
+
+    // The old token still verifies its signature — it was genuinely issued —
+    // but no longer matches the clinician's version, which is what the
+    // middleware compares. Signing out therefore ends sessions it cannot see.
+    expect(after).toBe(before + 1);
+    expect(token.tokenVersion).not.toBe(after);
   });
 
   it('scopes every population read to one clinician', () => {

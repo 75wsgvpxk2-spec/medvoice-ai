@@ -1,6 +1,6 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { config } from '../lib/config.ts';
-import { makeSessionToken, readSessionToken, verifyPassword } from '../lib/auth.ts';
+import { hashPassword, isExpired, makeSessionToken, readSessionToken, verifyPassword } from '../lib/auth.ts';
 import {
   clinicians,
   clinic,
@@ -16,7 +16,9 @@ import {
   ageFrom,
   audit,
   pronunciations,
+  wipeClinicalData,
 } from '../db/repositories.ts';
+import { seed as seedDemoPopulation } from '../db/seed.ts';
 import * as runtime from '../lib/settings.ts';
 import * as thresholds from '../lib/thresholds.ts';
 import * as installation from '../lib/installation.ts';
@@ -27,10 +29,11 @@ import { submitEncounter, approveEncounter, runPopulation, amendEncounter } from
 import { resolveAlert, previewResolution, completeOrder } from '../agents/resolution.ts';
 import { assessPatientRun, fingerprintOf, rerankQueue } from '../agents/clinical-intelligence.ts';
 import { evaluate } from '../clinical/rules.ts';
+import { toFhirBundle, toMarkdown } from '../clinical/report.ts';
 import { assessMonitoring } from '../clinical/monitoring.ts';
 import { subscribe } from '../orchestration/events.ts';
 import { summariseSpend } from '../model/spend.ts';
-import { id } from '../db/index.ts';
+import { db, id } from '../db/index.ts';
 import type {
   ClinicSettings,
   DismissalReason,
@@ -41,7 +44,7 @@ import type {
   Sex,
   UnitPreferences,
 } from '../../../shared/types.ts';
-import { BLOOD_TYPES } from '../../../shared/types.ts';
+import { BLOOD_TYPES, DEFAULT_BRAND } from '../../../shared/types.ts';
 
 export const api = express.Router();
 api.use(express.json({ limit: '4mb' }));  // headroom for a base64 clinic logo
@@ -71,15 +74,178 @@ function readCookie(req: Request, name: string): string | undefined {
 }
 
 /** DI-4: every route below this is scoped to the signed-in clinician. */
+const ENDED = 'Your session has ended. Sign in again to continue.';
+
 function requireClinician(req: AuthedRequest, res: Response, next: NextFunction): void {
-  const clinicianId = readSessionToken(readCookie(req, config.sessionCookieName));
-  if (!clinicianId || !clinicians.byId(clinicianId)) {
-    res.status(401).json({ error: 'Your session has ended. Sign in again to continue.' });
+  const claims = readSessionToken(readCookie(req, config.sessionCookieName));
+  if (!claims) {
+    res.status(401).json({ error: ENDED });
     return;
   }
-  req.clinicianId = clinicianId;
+
+  // Three separate ways a validly signed token can still be unacceptable: the
+  // clinician is gone, the token is past its lifetime, or it was issued before
+  // a sign-out. The message is the same for all of them — which one it was is
+  // not something an unauthenticated caller should learn.
+  const version = clinicians.tokenVersion(claims.clinicianId);
+  if (version === null || isExpired(claims, runtime.sessionHours()) || claims.tokenVersion !== version) {
+    res.status(401).json({ error: ENDED });
+    return;
+  }
+
+  req.clinicianId = claims.clinicianId;
   next();
 }
+/* ----------------------------------------------------------- registration -- */
+
+/**
+ * Whether this installation has an account yet. Unauthenticated by necessity —
+ * the sign-in screen has to know whether to offer sign-up instead.
+ *
+ * Says nothing beyond that. Whether an account exists is not sensitive; who it
+ * belongs to would be.
+ */
+api.get('/auth/status', (_req, res) => {
+  res.json({ hasAccount: clinicians.count() > 0 });
+});
+
+/**
+ * Creates the clinic's first and only account, and loads the demo population so
+ * there is something to look at.
+ *
+ * Allowed exactly once. A second call is refused whatever it is given — this is
+ * a single-clinician build, so an open sign-up endpoint would be a way to take
+ * over an installation rather than a feature.
+ */
+api.post('/auth/signup', (req, res) => {
+  if (clinicians.count() > 0) {
+    res.status(409).json({
+      error: 'This installation already has an account. Sign in instead.',
+    });
+    return;
+  }
+
+  const body = req.body as {
+    clinicName?: string;
+    name?: string;
+    credentials?: string;
+    email?: string;
+    password?: string;
+  };
+
+  const clinicName = String(body.clinicName ?? '').trim();
+  const name = String(body.name ?? '').trim();
+  const email = String(body.email ?? '').trim().toLowerCase();
+  const password = String(body.password ?? '');
+
+  if (!clinicName) {
+    res.status(400).json({ error: 'Enter the name of your clinic.' });
+    return;
+  }
+  if (!name) {
+    res.status(400).json({ error: 'Enter your name.' });
+    return;
+  }
+  if (!email.includes('@')) {
+    res.status(400).json({ error: 'Enter the email address you will sign in with.' });
+    return;
+  }
+  if (password.length < 10) {
+    res.status(400).json({ error: 'Choose a password of at least 10 characters.' });
+    return;
+  }
+
+  const { hash, salt } = hashPassword(password);
+  const clinicianId = id('clin');
+
+  clinicians.insert({
+    id: clinicianId,
+    name,
+    credentials: String(body.credentials ?? '').trim(),
+    email,
+    passwordHash: hash,
+    passwordSalt: salt,
+  });
+
+  clinic.save({
+    name: clinicName,
+    legalName: clinicName,
+    registration: '',
+    address: '',
+    phone: '',
+    email,
+    website: '',
+    logo: null,
+    ...DEFAULT_BRAND,
+  });
+
+  // Lands in demo mode with the fictional population: an empty system shows a
+  // clinician nothing about whether it is worth adopting. Going live wipes it.
+  seedDemoPopulation({ clinicianId });
+  installation.record('demo');
+
+  const hours = runtime.sessionHours();
+  res.cookie?.(config.sessionCookieName, makeSessionToken(clinicianId, 1), {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.isProd,
+    maxAge: hours * 60 * 60 * 1000,
+  });
+
+  audit.record({
+    actor: clinicianId,
+    actorName: name,
+    action: 'installation.created',
+    entityType: 'installation',
+    summary: `Created ${clinicName} with the demo population loaded. No real patient records exist yet.`,
+  });
+
+  res.json({
+    clinician: { id: clinicianId, name, credentials: String(body.credentials ?? '').trim() },
+    installation: { mode: 'demo' },
+  });
+});
+
+/**
+ * Leaves the demo behind and starts real records.
+ *
+ * Destructive and deliberately so: every fictional patient is deleted. The
+ * alternative — letting a clinic keep the demo population and add real patients
+ * alongside it — is the exact failure this guards against, because after a week
+ * nobody can tell which is which.
+ */
+api.post('/installation/go-live', requireClinician, (req: AuthedRequest, res) => {
+  if (installation.mode() === 'clinic') {
+    res.status(409).json({ error: 'This installation is already using real records.' });
+    return;
+  }
+
+  const { confirm } = req.body as { confirm?: string };
+  if (String(confirm ?? '').trim().toUpperCase() !== 'DELETE DEMO DATA') {
+    res.status(400).json({
+      error: 'Type DELETE DEMO DATA to confirm. Every demo patient will be permanently removed.',
+    });
+    return;
+  }
+
+  const { removed } = wipeClinicalData();
+  installation.record('clinic');
+
+  const clinician = clinicians.byId(req.clinicianId!);
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: clinician?.name ?? 'Unknown clinician',
+    action: 'installation.went_live',
+    entityType: 'installation',
+    summary:
+      'Switched from the demo to real records. Every demo patient and their history was deleted; ' +
+      'the clinic profile, settings and this audit trail were kept.',
+    detail: { removed },
+  });
+
+  res.json({ mode: 'clinic', removed });
+});
+
 /* ---------------------------------------------------------------- health -- */
 
 /**
@@ -117,11 +283,14 @@ api.post('/auth/login', (req, res) => {
     return;
   }
 
-  res.cookie?.(config.sessionCookieName, makeSessionToken(clinician.id), {
+  // The cookie's maxAge and the token's own lifetime are kept in step; the
+  // token is the one that is enforced, since a client can ignore the cookie's.
+  const hours = runtime.sessionHours();
+  res.cookie?.(config.sessionCookieName, makeSessionToken(clinician.id, clinician.tokenVersion), {
     httpOnly: true,
     sameSite: 'lax',
     secure: config.isProd,
-    maxAge: 12 * 60 * 60 * 1000,
+    maxAge: hours * 60 * 60 * 1000,
   });
   res.json({
     clinician: { id: clinician.id, name: clinician.name, credentials: clinician.credentials },
@@ -129,7 +298,15 @@ api.post('/auth/login', (req, res) => {
   });
 });
 
-api.post('/auth/logout', (_req, res) => {
+api.post('/auth/logout', (req: AuthedRequest, res) => {
+  // Clearing the cookie only removes this browser's copy. Bumping the token
+  // version is what actually ends the session everywhere it may have been
+  // captured — a shared clinic machine is exactly the case this matters for.
+  const claims = readSessionToken(readCookie(req, config.sessionCookieName));
+  if (claims && clinicians.byId(claims.clinicianId)) {
+    clinicians.revokeSessions(claims.clinicianId);
+    req.clinicianId = claims.clinicianId;
+  }
   res.clearCookie?.(config.sessionCookieName);
   res.json({ ok: true });
 });
@@ -171,6 +348,20 @@ api.put('/clinic', requireClinician, (req, res) => {
 
   const text = (key: string): string => String(body[key] ?? '').trim();
 
+  /**
+   * Chrome colours only, and only as six-digit hex.
+   *
+   * Anything else is rejected rather than coerced: these values are written
+   * straight into a CSS custom property, so accepting arbitrary text would let
+   * a clinic profile inject a style declaration. A bad colour also falls back
+   * to the default rather than leaving the interface unreadable.
+   */
+  const colour = (key: string, fallback: string): string => {
+    const value = text(key);
+    if (value === '') return fallback;
+    return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : fallback;
+  };
+
   res.json({
     clinic: clinic.save({
       name: text('name'),
@@ -181,6 +372,8 @@ api.put('/clinic', requireClinician, (req, res) => {
       email: text('email'),
       website: text('website'),
       logo,
+      brandDark: colour('brandDark', DEFAULT_BRAND.brandDark),
+      brandLight: colour('brandLight', DEFAULT_BRAND.brandLight),
     }),
   });
 });
@@ -586,6 +779,54 @@ api.get('/patients/:id', requireClinician, (req: AuthedRequest, res) => {
   });
 });
 
+/**
+ * A patient summary, in the format the receiving side can use.
+ *
+ * markdown for a referral or an email, fhir for a system that can import
+ * structured data. Both are generated from the same record, so they cannot
+ * disagree with each other.
+ */
+api.get('/patients/:id/report', requireClinician, (req: AuthedRequest, res) => {
+  const patient = patients.byId(param(req, 'id'));
+  if (!patient || patient.clinicianId !== req.clinicianId) {
+    res.status(404).json({ error: 'That patient is not in your population.' });
+    return;
+  }
+
+  const format = String(req.query['format'] ?? 'markdown');
+  const clinician = clinicians.byId(req.clinicianId!);
+  const source = {
+    patient,
+    clinic: clinic.get(),
+    clinicianName: clinician?.name ?? 'Unknown clinician',
+    encounters: encounters.forPatient(patient.id),
+    observations: observations.forPatient(patient.id),
+    flags: flags.activeForPatient(patient.id),
+    alerts: alerts.openForPatient(patient.id),
+    orders: orders.forPatient(patient.id),
+  };
+
+  // Exporting a record is a disclosure, so it belongs in the audit trail even
+  // though nothing in the database changed.
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: source.clinicianName,
+    action: 'report.generated',
+    entityType: 'patient',
+    entityId: patient.id,
+    patientId: patient.id,
+    summary: `Generated a ${format} summary for ${patient.name}.`,
+    detail: { format },
+  });
+
+  if (format === 'fhir') {
+    res.json(toFhirBundle(source));
+    return;
+  }
+
+  res.json({ markdown: toMarkdown(source), patientName: patient.name });
+});
+
 /* ------------------------------------------------------------- encounter -- */
 
 api.post('/patients/:id/encounters', requireClinician, async (req: AuthedRequest, res) => {
@@ -766,9 +1007,43 @@ api.post('/orders/:id/complete', requireClinician, async (req, res) => {
 
 api.get('/agent-runs', requireClinician, (req, res) => {
   const agent = req.query['agent'] as string | undefined;
+
+  /**
+   * What the AI actually did, in the terms a clinician or an auditor would ask.
+   *
+   * A run log alone answers "did it work". This answers "what was it, where did
+   * it go, and how much of what you are reading came from a model at all" —
+   * which for a system that puts model-written sentences in front of clinical
+   * decisions is the more important question.
+   */
+  const models = db()
+    .prepare(
+      `SELECT model, provider, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0) AS costUsd
+         FROM model_call GROUP BY model, provider ORDER BY calls DESC`,
+    )
+    .all() as Array<{ model: string; provider: string; calls: number; costUsd: number }>;
+
+  // A local call recorded while the clinic is configured for the live model is
+  // a degradation: the model was unreachable and the encoded engine answered.
+  const configuredLive = runtime.activeProvider() === 'anthropic';
+  const degraded = configuredLive
+    ? ((db()
+        .prepare("SELECT COUNT(*) AS n FROM model_call WHERE provider = 'deterministic' AND cached = 0")
+        .get() as { n: number }).n)
+    : 0;
+
   res.json({
     runs: runs.recent(200, agent as never),
     spend: summariseSpend(),
+    transparency: {
+      configuredProvider: runtime.activeProvider(),
+      configuredModel: runtime.modelId(),
+      endpoint: runtime.baseUrl() || 'https://api.anthropic.com',
+      keySource: runtime.apiKeySource(),
+      transcription: runtime.activeTranscription(),
+      models,
+      degraded,
+    },
   });
 });
 
@@ -831,6 +1106,27 @@ api.put('/settings', requireClinician, (req: AuthedRequest, res) => {
       // Only the last four characters are ever recorded, here or anywhere else.
       changed.push(`stored a new API key ending …${key.slice(-4)}`);
     }
+  }
+
+  if (body.baseUrl !== undefined) {
+    const url = String(body.baseUrl).trim();
+    if (url !== '') {
+      // A malformed endpoint would fail on every agent call rather than here,
+      // where the person who typed it is still looking at the field.
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        res.status(400).json({ error: 'Enter a full URL, for example https://gateway.clinic.example.' });
+        return;
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        res.status(400).json({ error: 'The endpoint must be an http or https URL.' });
+        return;
+      }
+    }
+    runtime.settingStore.put(runtime.SETTING_KEYS.baseUrl, url, req.clinicianId!);
+    if (url !== before.baseUrl) changed.push(url ? `model endpoint to ${url}` : 'model endpoint back to Anthropic');
   }
 
   if (body.transcription !== undefined) {
@@ -900,6 +1196,16 @@ api.put('/settings', requireClinician, (req: AuthedRequest, res) => {
     }
     runtime.settingStore.put(runtime.SETTING_KEYS.followUp, days, req.clinicianId!);
     changed.push(`review interval to ${days} days`);
+  }
+
+  if (body.sessionHours !== undefined) {
+    const hours = Number(body.sessionHours);
+    if (!Number.isInteger(hours) || hours < 1 || hours > 720) {
+      res.status(400).json({ error: 'Set the session length between 1 and 720 hours.' });
+      return;
+    }
+    runtime.settingStore.put(runtime.SETTING_KEYS.sessionHours, hours, req.clinicianId!);
+    if (hours !== before.sessionHours) changed.push(`session length to ${hours} hours`);
   }
 
   if (body.showAgentStrip !== undefined) {
