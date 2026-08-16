@@ -2099,3 +2099,37 @@ tbody tr:hover { background: var(--brand-wash); }
 .usage-bar .fill-live { background: var(--brand-gradient); }
 .usage-bar .fill-cache { background: var(--managed); }
 .usage-bar .fill-local { background: var(--stable); }
+
+/* Clinic identity in the sidebar ---------------------------------------------- */
+
+.clinic-wordmark {
+  display: block;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #fff;
+  /* A long practice name truncates rather than wrapping the brand row onto
+     two lines and pushing the navigation down. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.sidebar-footer .who-clinic {
+  display: block;
+  color: #fff;
+  font-weight: 600;
+  margin-bottom: 1px;
+}
+
+.sidebar-footer .who-person {
+  display: block;
+  color: rgb(255 255 255 / 88%);
+}
+
+.sidebar-footer .who-cred {
+  display: block;
+  font-size: var(--text-xs);
+  color: rgb(255 255 255 / 64%);
+}

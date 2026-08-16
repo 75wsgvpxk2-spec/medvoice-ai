@@ -40,9 +40,6 @@ export function mode(): InstallationMode {
   return current()?.mode ?? 'demo';
 }
 
-export function isDemo(): boolean {
-  return mode() === 'demo';
-}
 
 export function record(next: InstallationMode): Installation {
   const installation: Installation = { mode: next, createdAt: new Date().toISOString() };

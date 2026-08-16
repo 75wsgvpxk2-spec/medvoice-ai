@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS clinic (
   -- Chrome only. Urgency colours are not clinic-configurable.
   brand_dark    TEXT NOT NULL DEFAULT '',
   brand_light   TEXT NOT NULL DEFAULT '',
+  primary_doctor TEXT NOT NULL DEFAULT '',
   updated_at    TEXT
 );
 
@@ -226,6 +227,9 @@ CREATE TABLE IF NOT EXISTS model_call (
   duration_ms        INTEGER NOT NULL DEFAULT 0,
   cached             INTEGER NOT NULL DEFAULT 0,
   phase              TEXT,
+  -- Set when a live call was configured but could not be made. Lets the AI
+  -- usage panel report why the local engine answered rather than infer it.
+  degraded_reason    TEXT,
   created_at         TEXT NOT NULL
 );
 

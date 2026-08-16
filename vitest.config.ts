@@ -8,6 +8,20 @@ export default defineConfig({
     env: {
       DB_PATH: path.resolve(import.meta.dirname, 'data', 'test.db'),
       SESSION_SECRET: 'test-secret-not-used-outside-tests',
+      /*
+       * The suite runs on the deterministic engine unless LIVE_MODEL is set.
+       *
+       * A contributor without an API key — or a maintainer whose account has
+       * run out of credit — must still be able to run the tests, or the tests
+       * stop being the thing that tells you whether a change is safe. Blanking
+       * the key is enough: activeProvider() falls back to the local engine
+       * exactly as it does for a clinic that has not configured one.
+       *
+       * The clinical assertions are about thresholds and rules, which the
+       * encoded engine implements. Only tests asserting how the model *words*
+       * something need the live path, and those declare it with itLive().
+       */
+      ...(process.env['LIVE_MODEL'] === '1' ? {} : { ANTHROPIC_API_KEY: '' }),
     },
     include: ['tests/**/*.test.ts'],
     // The agents write to a shared SQLite file, so suites run one at a time.

@@ -16,6 +16,7 @@ const BLANK: Omit<Clinic, 'updatedAt'> = {
   website: '',
   logo: null,
   ...DEFAULT_BRAND,
+  primaryDoctor: '',
 };
 
 /**
@@ -205,14 +206,28 @@ export function ClinicProfile({ onSaved }: { onSaved: (clinic: Clinic) => void }
       <div className="card stack">
         <h2>Business details</h2>
 
-        <div>
-          <label htmlFor="c-name">Clinic name</label>
-          <input
-            id="c-name"
-            value={form.name}
-            onChange={(e) => set('name', e.target.value)}
-            placeholder="The name patients know you by"
-          />
+        <div className="field-pair">
+          <div>
+            <label htmlFor="c-name">Clinic name</label>
+            <input
+              id="c-name"
+              value={form.name}
+              onChange={(e) => set('name', e.target.value)}
+              placeholder="The name patients know you by"
+            />
+          </div>
+          <div>
+            <label htmlFor="c-doctor">Primary doctor</label>
+            <input
+              id="c-doctor"
+              value={form.primaryDoctor}
+              onChange={(e) => set('primaryDoctor', e.target.value)}
+              placeholder="Dr Ada Kwame"
+            />
+            {/* The name on the door, which is not necessarily whoever happens
+                to be signed in. */}
+            <p className="hint">Shown in the sidebar and on printed summaries.</p>
+          </div>
         </div>
 
         <div className="field-pair">

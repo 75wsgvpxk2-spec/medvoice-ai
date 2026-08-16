@@ -11,6 +11,8 @@ export interface SpendRecord {
   durationMs: number;
   cached: boolean;
   phase?: string;
+  /** Why the local engine answered a call that was meant to be live. */
+  degradedReason?: string;
 }
 
 /** Every model call, live or deterministic, lands here. Section 11. */
@@ -22,8 +24,8 @@ export function recordCall(record: SpendRecord): number {
       `INSERT INTO model_call
          (id, agent, provider, model, input_tokens, output_tokens,
           cache_read_tokens, cache_write_tokens, cost_usd, duration_ms,
-          cached, phase, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          cached, phase, degraded_reason, created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     )
     .run(
       id('mc'),
@@ -38,6 +40,7 @@ export function recordCall(record: SpendRecord): number {
       record.durationMs,
       record.cached ? 1 : 0,
       record.phase ?? null,
+      record.degradedReason ?? null,
       now(),
     );
 

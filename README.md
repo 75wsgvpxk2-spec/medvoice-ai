@@ -135,7 +135,8 @@ Vitest. Hand-written CSS. No ORM, no component library, no state manager — see
 | `npm run seed:demo` | Loads the 15-patient fictional population |
 | `npm run dev` | Server and client together; sign in at http://localhost:5173 |
 | `npm start` | Production server |
-| `npm test` | The full scenario suite — 103 tests |
+| `npm test` | The full scenario suite — 105 tests, no API key needed |
+| `npm run test:live` | The same suite against the real model |
 | `npm run inspect` | Population overview |
 | `npm run inspect -- beaupierre` | One patient in full — history, flags, alerts, monitoring |
 | `npm run spend` | Token spend against the budget |
@@ -151,8 +152,13 @@ build specification, run against the live model. Fourteen are marked
 ambiguous unit being guessed instead of flagged.
 
 ```bash
-npm test
+npm test            # deterministic engine — no API key needed, runs in seconds
+npm run test:live   # the same suite against the real model
 ```
+
+The suite needs no Anthropic account to run. The clinical assertions are
+identical on both paths; the live run is what catches the model changing its
+behaviour.
 
 Two results worth knowing about, both recorded in
 [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md):

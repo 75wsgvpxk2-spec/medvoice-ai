@@ -55,6 +55,13 @@ export function App() {
     localStorage.setItem('mv-rail', railed ? '1' : '0');
   }, [railed]);
 
+  // The browser tab is part of the clinic's identity too — several of these
+  // open at once on a shared machine, and "Clinical Intelligence" four times
+  // tells nobody which is which.
+  useEffect(() => {
+    document.title = clinic?.name ? `${clinic.name} — Clinical Intelligence` : 'Clinical Intelligence';
+  }, [clinic?.name]);
+
   const loadQueue = useCallback(() => {
     setQueueLoading(true);
     api
@@ -149,9 +156,15 @@ export function App() {
     <div className={`shell ${railed ? 'rail' : ''}`}>
       <aside className="sidebar">
         <div className="sidebar-brand">
+          {/* The clinic's own identity wherever it has given one. A practice
+              that has set its name should not still be looking at ours. */}
           <span className="wordmark">
             {clinic?.logo ? (
               <img className="clinic-logo" src={clinic.logo} alt={clinic.name || 'Clinic logo'} />
+            ) : clinic?.name ? (
+              <span className="clinic-wordmark" title={clinic.name}>
+                {clinic.name}
+              </span>
             ) : (
               <Logo height={26} onBrand />
             )}
@@ -229,8 +242,21 @@ export function App() {
         {/* Only the account itself sits at the foot now. */}
         <div className="sidebar-footer">
           <span className="who">
-            <strong>{clinician.name}</strong>
-            {clinician.credentials}
+            {clinic?.name && <strong className="who-clinic">{clinic.name}</strong>}
+            {/* The clinic's named doctor when it has one, otherwise whoever is
+                signed in. Both are shown when they differ, because on a shared
+                machine "who is this account" is a question worth answering. */}
+            {clinic?.primaryDoctor && (
+              <span className="who-person">{clinic.primaryDoctor}</span>
+            )}
+            {(!clinic?.primaryDoctor || clinic.primaryDoctor !== clinician.name) && (
+              <span className={clinic?.primaryDoctor ? 'who-cred' : 'who-person'}>
+                {clinic?.primaryDoctor ? `Signed in: ${clinician.name}` : clinician.name}
+              </span>
+            )}
+            {!clinic?.primaryDoctor && clinician.credentials && (
+              <span className="who-cred">{clinician.credentials}</span>
+            )}
           </span>
           <NavItem
             label="Clinic profile"

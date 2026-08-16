@@ -184,6 +184,7 @@ export interface Transparency {
   transcription: 'browser' | 'assemblyai';
   models: Array<{ model: string; provider: string; calls: number; costUsd: number }>;
   degraded: number;
+  degradedReasons: Array<{ reason: string; calls: number; lastAt: string }>;
 }
 
 export interface SettingsView {

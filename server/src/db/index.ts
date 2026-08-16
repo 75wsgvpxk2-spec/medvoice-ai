@@ -39,6 +39,8 @@ function migrate(conn: Database.Database): void {
     ['clinician', 'token_version', 'INTEGER NOT NULL DEFAULT 1'],
     ['clinic', 'brand_dark', "TEXT NOT NULL DEFAULT ''"],
     ['clinic', 'brand_light', "TEXT NOT NULL DEFAULT ''"],
+    ['clinic', 'primary_doctor', "TEXT NOT NULL DEFAULT ''"],
+    ['model_call', 'degraded_reason', 'TEXT'],
   ];
   for (const [table, column, definition] of added) {
     const columns = conn.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;

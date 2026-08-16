@@ -13,10 +13,24 @@ npm run seed:demo
 npm test
 ```
 
-Tests run against the live model when `ANTHROPIC_API_KEY` is set, and against
-the deterministic engine when it is not. Both paths must pass. If you are
-changing agent behaviour, run with a key — the deterministic engine will not
-catch a prompt regression.
+**`npm test` needs no API key.** It runs the whole suite against the
+deterministic engine in a few seconds. You can clone this repository, run the
+tests, and change things without an Anthropic account.
+
+```bash
+npm test        # deterministic — no key, no cost, runs in CI
+npm run test:live   # the same suite against the real model
+```
+
+Both must pass before a release, and the distinction matters. The clinical
+assertions — thresholds, rules, ranking — are identical either way, so the
+deterministic run tells you whether the logic is right. What it cannot tell you
+is whether the *model* still behaves: a live run once caught the model inventing
+a medication discrepancy that did not exist, and no amount of deterministic
+testing would have found that.
+
+So: run `npm test` while you work, and `npm run test:live` before you open a
+pull request that touches a prompt, a schema, or an agent.
 
 ## The bar for clinical changes
 

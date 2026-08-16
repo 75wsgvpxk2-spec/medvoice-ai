@@ -360,6 +360,11 @@ export interface Clinic {
    */
   brandDark: string;
   brandLight: string;
+  /**
+   * The doctor the clinic is known by — the name on the door, which is not
+   * necessarily whoever is signed in at the time.
+   */
+  primaryDoctor: string;
   updatedAt: string | null;
 }
 

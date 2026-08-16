@@ -269,6 +269,7 @@ const EMPTY_CLINIC: Clinic = {
   website: '',
   logo: null,
   ...DEFAULT_BRAND,
+  primaryDoctor: '',
   updatedAt: null,
 };
 
@@ -287,6 +288,7 @@ export const clinic = {
       logo: (r['logo'] as string | null) ?? null,
       brandDark: (r['brand_dark'] as string) || DEFAULT_BRAND.brandDark,
       brandLight: (r['brand_light'] as string) || DEFAULT_BRAND.brandLight,
+      primaryDoctor: (r['primary_doctor'] as string) ?? '',
       updatedAt: (r['updated_at'] as string | null) ?? null,
     };
   },
@@ -295,14 +297,15 @@ export const clinic = {
     db()
       .prepare(
         `INSERT INTO clinic (id, name, legal_name, registration, address, phone, email, website, logo,
-                              brand_dark, brand_light, updated_at)
-         VALUES ('clinic',?,?,?,?,?,?,?,?,?,?,?)
+                              brand_dark, brand_light, primary_doctor, updated_at)
+         VALUES ('clinic',?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name, legal_name = excluded.legal_name,
            registration = excluded.registration, address = excluded.address,
            phone = excluded.phone, email = excluded.email,
            website = excluded.website, logo = excluded.logo,
            brand_dark = excluded.brand_dark, brand_light = excluded.brand_light,
+           primary_doctor = excluded.primary_doctor,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -316,6 +319,7 @@ export const clinic = {
         input.logo,
         input.brandDark,
         input.brandLight,
+        input.primaryDoctor,
         now(),
       );
     return clinic.get();

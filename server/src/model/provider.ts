@@ -52,6 +52,13 @@ export interface AgentCallResult<T> {
   cached: boolean;
   durationMs: number;
   costUsd: number;
+  /**
+   * Set only when a live call was configured and could not be made, so the
+   * encoded engine answered instead. Present means the clinician is reading
+   * locally generated wording rather than the model's, which is a difference
+   * worth being able to surface rather than infer.
+   */
+  degradedReason?: string;
 }
 
 let client: Anthropic | null = null;
@@ -190,6 +197,7 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
       durationMs,
       cached: false,
+      degradedReason: reason,
     });
     if (options.cacheKey) writeCache(options.cacheKey, options.agent, output);
     return {

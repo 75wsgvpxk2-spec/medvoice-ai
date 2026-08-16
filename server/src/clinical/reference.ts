@@ -107,10 +107,6 @@ export function setThresholdResolver(resolver: OverrideResolver): void {
   resolveOverride = resolver;
 }
 
-/** Restores reference values. Used between tests so one cannot leak into another. */
-export function clearThresholdResolver(): void {
-  resolveOverride = () => null;
-}
 
 function threshold(referenceId: string, value: number, label: string, name = ''): Threshold {
   return {

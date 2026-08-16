@@ -108,6 +108,7 @@ async function main(): Promise<void> {
     website: '',
     logo: null,
     ...DEFAULT_BRAND,
+    primaryDoctor: clinicianName,
   });
 
   recordInstallation('clinic');

@@ -20,7 +20,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "setup": "tsx scripts/setup.ts",
-    "seed:demo": "tsx scripts/seed.ts"
+    "seed:demo": "tsx scripts/seed.ts",
+    "test:live": "cross-env LIVE_MODEL=1 vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",

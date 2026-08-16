@@ -177,6 +177,8 @@ api.post('/auth/signup', (req, res) => {
     website: '',
     logo: null,
     ...DEFAULT_BRAND,
+    // Whoever creates the clinic is the doctor it is known by, until changed.
+    primaryDoctor: name,
   });
 
   // Lands in demo mode with the fictional population: an empty system shows a
@@ -374,6 +376,7 @@ api.put('/clinic', requireClinician, (req, res) => {
       logo,
       brandDark: colour('brandDark', DEFAULT_BRAND.brandDark),
       brandLight: colour('brandLight', DEFAULT_BRAND.brandLight),
+      primaryDoctor: text('primaryDoctor'),
     }),
   });
 });
@@ -1023,14 +1026,17 @@ api.get('/agent-runs', requireClinician, (req, res) => {
     )
     .all() as Array<{ model: string; provider: string; calls: number; costUsd: number }>;
 
-  // A local call recorded while the clinic is configured for the live model is
-  // a degradation: the model was unreachable and the encoded engine answered.
-  const configuredLive = runtime.activeProvider() === 'anthropic';
-  const degraded = configuredLive
-    ? ((db()
-        .prepare("SELECT COUNT(*) AS n FROM model_call WHERE provider = 'deterministic' AND cached = 0")
-        .get() as { n: number }).n)
-    : 0;
+  // Recorded at the moment of failure rather than inferred from the provider
+  // column, so the panel can say what went wrong instead of only that
+  // something did.
+  const degradedRows = db()
+    .prepare(
+      `SELECT degraded_reason AS reason, COUNT(*) AS calls, MAX(created_at) AS lastAt
+         FROM model_call WHERE degraded_reason IS NOT NULL
+        GROUP BY degraded_reason ORDER BY calls DESC`,
+    )
+    .all() as Array<{ reason: string; calls: number; lastAt: string }>;
+  const degraded = degradedRows.reduce((sum, row) => sum + row.calls, 0);
 
   res.json({
     runs: runs.recent(200, agent as never),
@@ -1043,6 +1049,7 @@ api.get('/agent-runs', requireClinician, (req, res) => {
       transcription: runtime.activeTranscription(),
       models,
       degraded,
+      degradedReasons: degradedRows,
     },
   });
 });

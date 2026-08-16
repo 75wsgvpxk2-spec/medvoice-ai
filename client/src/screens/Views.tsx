@@ -419,6 +419,41 @@ export function AgentActivity({ onBack }: { onBack: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
+  const [search, setSearch] = useState('');
+  const [outcome, setOutcome] = useState('');
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 25;
+
+  // The run log is small enough to filter in the browser — a few hundred rows,
+  // already fetched. Doing it on the server would add a round trip per
+  // keystroke for no gain at this size.
+  const visible = (runs ?? []).filter((run) => {
+    if (outcome && run.outcome !== outcome) return false;
+    if (!search.trim()) return true;
+    const needle = search.trim().toLowerCase();
+    return [
+      AGENT_LABELS[run.agent] ?? run.agent,
+      run.trigger.replace(/_/g, ' '),
+      run.patientId ?? 'population',
+      run.outcome,
+      run.errorMessage ?? '',
+      run.outputSummary ?? '',
+      run.correlationId,
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(needle);
+  });
+
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const rows = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  // Narrowing the results can leave you on a page that no longer exists.
+  useEffect(() => {
+    setPage(1);
+  }, [search, outcome, filter]);
+
   const load = () => {
     setError(null);
     api
@@ -445,7 +480,20 @@ export function AgentActivity({ onBack }: { onBack: () => void }) {
             </div>
           )}
         </div>
-        <select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter by agent" style={{ width: 'auto' }}>
+        <button className="quiet" onClick={load}>
+          Refresh
+        </button>
+      </div>
+
+      <div className="toolbar">
+        <input
+          placeholder="Search agent, patient, trigger or error"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search agent runs"
+          style={{ minWidth: 240, flex: '1 1 240px' }}
+        />
+        <select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Filter by agent">
           <option value="">All agents</option>
           {Object.entries(AGENT_LABELS).map(([value, label]) => (
             <option key={value} value={value}>
@@ -453,15 +501,35 @@ export function AgentActivity({ onBack }: { onBack: () => void }) {
             </option>
           ))}
         </select>
+        <select value={outcome} onChange={(e) => setOutcome(e.target.value)} aria-label="Filter by outcome">
+          <option value="">Any outcome</option>
+          <option value="success">Success</option>
+          <option value="failure">Failure</option>
+          <option value="running">Running</option>
+        </select>
+        {(search || outcome || filter) && (
+          <button
+            className="link"
+            onClick={() => {
+              setSearch('');
+              setOutcome('');
+              setFilter('');
+            }}
+          >
+            Clear
+          </button>
+        )}
       </div>
 
       {error && <ErrorState message={error} onRetry={load} />}
 
-      {transparency && spend && <AiTransparency t={transparency} spend={spend} />}
-
       {runs && runs.length === 0 && <EmptyState title="No agent has run yet." />}
 
-      {runs && runs.length > 0 && (
+      {runs && runs.length > 0 && visible.length === 0 && (
+        <EmptyState title="No run matches these filters." />
+      )}
+
+      {rows.length > 0 && (
         <div className="card" style={{ overflowX: 'auto' }}>
           <table className="runs">
             <thead>
@@ -476,12 +544,14 @@ export function AgentActivity({ onBack }: { onBack: () => void }) {
               </tr>
             </thead>
             <tbody>
-              {runs.map((run) => {
+              {rows.map((run) => {
                 const expanded = open === run.id;
                 /* Runs sharing a correlation id came from the same trigger, which
                    is how a parallel pair is identified without guessing from
                    timestamps. */
-                const siblings = runs.filter(
+                // Searched against every run, not just the visible page: the
+                // partner of a filtered run is usually filtered out with it.
+                const siblings = (runs ?? []).filter(
                   (r) => r.correlationId === run.correlationId && r.id !== run.id,
                 );
                 return (
@@ -595,6 +665,36 @@ export function AgentActivity({ onBack }: { onBack: () => void }) {
           </table>
         </div>
       )}
+
+      {visible.length > 0 && (
+        <div className="pager">
+          <span className="pager-count tabular">
+            {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, visible.length)} of{' '}
+            {visible.length}
+            {visible.length !== (runs?.length ?? 0) && ` (filtered from ${runs?.length ?? 0})`}
+          </span>
+          {totalPages > 1 && (
+            <span className="row" style={{ gap: 'var(--gap-2)' }}>
+              <button
+                className="quiet"
+                onClick={() => setPage((n) => Math.max(1, n - 1))}
+                disabled={safePage <= 1}
+              >
+                Previous
+              </button>
+              <button
+                className="quiet"
+                onClick={() => setPage((n) => Math.min(totalPages, n + 1))}
+                disabled={safePage >= totalPages}
+              >
+                Next
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+
+      {transparency && spend && <AiTransparency t={transparency} spend={spend} />}
     </div>
   );
 }
@@ -659,11 +759,23 @@ function AiTransparency({ t, spend }: { t: Transparency; spend: SpendSummary }) 
       </div>
 
       {t.degraded > 0 && (
-        <div className="error">
-          <strong>{t.degraded} call{t.degraded === 1 ? '' : 's'} fell back to the local engine.</strong>{' '}
-          A live model is configured but was unreachable — check the key and its credit balance in
-          Settings. The system kept working; the wording of those results is encoded, not written by
-          a model.
+        <div className="error stack" style={{ gap: 'var(--gap-2)' }}>
+          <div>
+            <strong>
+              {t.degraded} call{t.degraded === 1 ? '' : 's'} fell back to the local engine.
+            </strong>{' '}
+            The system kept working, but the wording of those results is encoded rather than written
+            by a model.
+          </div>
+          {/* The reason is recorded when the call fails, so this says what went
+              wrong rather than only that something did. */}
+          <ul className="outcome-list">
+            {t.degradedReasons.map((r) => (
+              <li key={r.reason}>
+                {r.calls} × {r.reason} — last {new Date(r.lastAt).toLocaleString()}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
