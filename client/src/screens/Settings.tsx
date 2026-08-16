@@ -3,6 +3,7 @@ import type { ClinicSettings, Pronunciation, UnitPreferences } from '../../../sh
 import { api, ApiError, type SettingsView, type ThresholdRow } from '../api';
 import { ErrorState, EmptyState } from '../components';
 import { useDictation } from '../lib/speech';
+import { Users } from './Users';
 
 /**
  * The command centre — everything that makes the platform bend to one clinic.
@@ -65,6 +66,7 @@ export function Settings() {
 
       {error && <ErrorState message={error} />}
 
+      <Users />
       <ModelSection view={view} onSave={save} saving={saving} />
       <TranscriptionSection settings={s} onSave={save} saving={saving} />
       <UnitsSection settings={s} onSave={save} saving={saving} />

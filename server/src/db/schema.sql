@@ -13,7 +13,20 @@ CREATE TABLE IF NOT EXISTS clinician (
   password_salt TEXT NOT NULL,
   -- Incremented to invalidate every token already issued to this clinician.
   -- Signing out bumps it, which is what makes a stateless token revocable.
-  token_version INTEGER NOT NULL DEFAULT 1
+  token_version INTEGER NOT NULL DEFAULT 1,
+  /*
+   * HIPAA §164.312(a)(2)(i) requires unique user identification: every person
+   * who touches the record needs their own sign-in, or the audit trail cannot
+   * say who did anything. These columns are what make that real.
+   */
+  role          TEXT NOT NULL DEFAULT 'clinician'
+                  CHECK (role IN ('admin','clinician')),
+  -- Deactivated rather than deleted, so audit history keeps resolving to a name.
+  active        INTEGER NOT NULL DEFAULT 1,
+  -- Set when an admin issues a temporary password. Cleared once changed.
+  must_change_password INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT,
+  last_sign_in_at TEXT
 );
 
 /*

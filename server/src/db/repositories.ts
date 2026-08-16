@@ -17,6 +17,7 @@ import type {
   ResolutionAction,
   DismissalReason,
   ObservationType,
+  ClinicianRole,
   Clinic,
   PatientProfile,
   AuditEvent,
@@ -206,10 +207,7 @@ export const clinicians = {
     const r = db().prepare('SELECT * FROM clinician WHERE email = ?').get(email) as Row | undefined;
     if (!r) return null;
     return {
-      id: r['id'] as string,
-      name: r['name'] as string,
-      credentials: r['credentials'] as string,
-      email: r['email'] as string,
+      ...toClinician(r),
       passwordHash: r['password_hash'] as string,
       passwordSalt: r['password_salt'] as string,
       tokenVersion: (r['token_version'] as number) ?? 1,
@@ -238,24 +236,94 @@ export const clinicians = {
 
   byId(clinicianId: string): Clinician | null {
     const r = db().prepare('SELECT * FROM clinician WHERE id = ?').get(clinicianId) as Row | undefined;
-    if (!r) return null;
-    return {
-      id: r['id'] as string,
-      name: r['name'] as string,
-      credentials: r['credentials'] as string,
-      email: r['email'] as string,
-    };
+    return r ? toClinician(r) : null;
   },
 
-  insert(c: Clinician & { passwordHash: string; passwordSalt: string }): void {
+  /** Everyone with a sign-in, deactivated included — they still appear in audit. */
+  all(): Clinician[] {
+    return (
+      db().prepare('SELECT * FROM clinician ORDER BY active DESC, name').all() as Row[]
+    ).map(toClinician);
+  },
+
+  insert(
+    c: Omit<Clinician, 'role' | 'active' | 'mustChangePassword' | 'createdAt' | 'lastSignInAt'> & {
+      passwordHash: string;
+      passwordSalt: string;
+      role?: ClinicianRole;
+      mustChangePassword?: boolean;
+    },
+  ): void {
     db()
       .prepare(
-        `INSERT INTO clinician (id, name, credentials, email, password_hash, password_salt)
-         VALUES (?,?,?,?,?,?)`,
+        `INSERT INTO clinician
+           (id, name, credentials, email, password_hash, password_salt,
+            role, active, must_change_password, created_at)
+         VALUES (?,?,?,?,?,?,?,1,?,?)`,
       )
-      .run(c.id, c.name, c.credentials, c.email, c.passwordHash, c.passwordSalt);
+      .run(
+        c.id,
+        c.name,
+        c.credentials,
+        c.email,
+        c.passwordHash,
+        c.passwordSalt,
+        c.role ?? 'clinician',
+        c.mustChangePassword ? 1 : 0,
+        now(),
+      );
+  },
+
+  setPassword(clinicianId: string, hash: string, salt: string, mustChange: boolean): void {
+    db()
+      .prepare(
+        `UPDATE clinician
+            SET password_hash = ?, password_salt = ?, must_change_password = ?,
+                token_version = token_version + 1
+          WHERE id = ?`,
+      )
+      // Changing a password ends every session opened with the old one. If it
+      // was changed because it leaked, leaving those alive defeats the point.
+      .run(hash, salt, mustChange ? 1 : 0, clinicianId);
+  },
+
+  setActive(clinicianId: string, active: boolean): void {
+    db()
+      .prepare('UPDATE clinician SET active = ?, token_version = token_version + 1 WHERE id = ?')
+      // Deactivation takes effect on the next request, not the next sign-in.
+      .run(active ? 1 : 0, clinicianId);
+  },
+
+  setRole(clinicianId: string, role: ClinicianRole): void {
+    db().prepare('UPDATE clinician SET role = ? WHERE id = ?').run(role, clinicianId);
+  },
+
+  recordSignIn(clinicianId: string): void {
+    db().prepare('UPDATE clinician SET last_sign_in_at = ? WHERE id = ?').run(now(), clinicianId);
+  },
+
+  /** How many admins remain active — the last one must not be removed. */
+  activeAdminCount(): number {
+    const r = db()
+      .prepare("SELECT COUNT(*) AS n FROM clinician WHERE role = 'admin' AND active = 1")
+      .get() as Row;
+    return (r['n'] as number) ?? 0;
   },
 };
+
+function toClinician(r: Row): Clinician {
+  return {
+    id: r['id'] as string,
+    name: r['name'] as string,
+    credentials: r['credentials'] as string,
+    email: r['email'] as string,
+    role: ((r['role'] as string) ?? 'clinician') as ClinicianRole,
+    active: (r['active'] as number) !== 0,
+    mustChangePassword: (r['must_change_password'] as number) === 1,
+    createdAt: (r['created_at'] as string | null) ?? null,
+    lastSignInAt: (r['last_sign_in_at'] as string | null) ?? null,
+  };
+}
 
 /* ---------------------------------------------------------------- clinic -- */
 
@@ -329,7 +397,25 @@ export const clinic = {
 /* --------------------------------------------------------------- patient -- */
 
 export const patients = {
-  /** DI-4: every population read is scoped to the session's clinician. */
+  /**
+   * Every patient in this installation.
+   *
+   * The access boundary is the installation, not the clinician. One deployment
+   * serves one clinic, and staff at a clinic share a caseload — a nurse who
+   * cannot see the patient in front of them because a colleague registered
+   * them is a system nobody will use. `clinician_id` remains on the row as
+   * attribution: who added them, and who the assessment ran for.
+   *
+   * This is a deliberate departure from DI-4's per-clinician isolation, which
+   * was written for a single-clinician build. See docs/DEVIATIONS.md item 2.
+   */
+  forClinic(): Patient[] {
+    return (
+      db().prepare('SELECT * FROM patient ORDER BY name').all() as Row[]
+    ).map(toPatient);
+  },
+
+  /** Scoped to one clinician. Attribution and agent runs, not access control. */
   forClinician(clinicianId: string): Patient[] {
     return (
       db()

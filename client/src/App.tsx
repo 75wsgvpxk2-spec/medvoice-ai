@@ -12,6 +12,7 @@ import { Logo } from './components/Logo';
 import { applyBranding } from './lib/branding';
 import { ClinicProfile } from './screens/ClinicProfile';
 import { Dashboard } from './screens/Dashboard';
+import { ChangePassword } from './screens/Users';
 import { Flags } from './screens/Flags';
 import { Settings } from './screens/Settings';
 import { Audit } from './screens/Audit';
@@ -105,6 +106,12 @@ export function App() {
 
   if (checkingSession) return <div style={{ padding: 'var(--gap-6)' }}>Checking your session…</div>;
   if (!clinician) return <Login onSignedIn={() => window.location.reload()} />;
+
+  // A temporary password has been spoken aloud or written down by the time it
+  // gets here. Nothing else is reachable until it has been replaced.
+  if (clinician.mustChangePassword) {
+    return <ChangePassword onDone={() => window.location.reload()} />;
+  }
 
   const runPopulation = async () => {
     setRunning(true);

@@ -1,4 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
+import { randomBytes } from 'node:crypto';
 import { config } from '../lib/config.ts';
 import { hashPassword, isExpired, makeSessionToken, readSessionToken, verifyPassword } from '../lib/auth.ts';
 import {
@@ -93,8 +94,41 @@ function requireClinician(req: AuthedRequest, res: Response, next: NextFunction)
     return;
   }
 
+  // Deactivating a user bumps their token version, so this is belt and braces
+  // — but an access check that depends on one mechanism is one bug from being
+  // no access check at all.
+  const clinician = clinicians.byId(claims.clinicianId);
+  if (!clinician || !clinician.active) {
+    res.status(401).json({ error: 'This account is no longer active. Speak to your administrator.' });
+    return;
+  }
+
   req.clinicianId = claims.clinicianId;
   next();
+}
+
+/** Admin-only routes. Never infer this from the client. */
+function requireAdmin(req: AuthedRequest, res: Response, next: NextFunction): void {
+  const clinician = clinicians.byId(req.clinicianId!);
+  if (clinician?.role !== 'admin') {
+    res.status(403).json({ error: 'Only an administrator can change staff accounts.' });
+    return;
+  }
+  next();
+}
+
+/**
+ * A readable temporary password.
+ *
+ * Given to a colleague verbally or on paper, so it avoids characters that are
+ * ambiguous when read aloud or written by hand — no 0/O, no 1/l/I. Long enough
+ * that the reduced alphabet costs nothing, and it must be changed at first
+ * sign-in anyway.
+ */
+function temporaryPassword(): string {
+  const alphabet = 'abcdefghjkmnpqrstuvwxyzACDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = randomBytes(14);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
 }
 /* ----------------------------------------------------------- registration -- */
 
@@ -165,6 +199,7 @@ api.post('/auth/signup', (req, res) => {
     email,
     passwordHash: hash,
     passwordSalt: salt,
+    role: 'admin',
   });
 
   clinic.save({
@@ -203,7 +238,7 @@ api.post('/auth/signup', (req, res) => {
   });
 
   res.json({
-    clinician: { id: clinicianId, name, credentials: String(body.credentials ?? '').trim() },
+    clinician: clinicians.byId(clinicianId),
     installation: { mode: 'demo' },
   });
 });
@@ -279,11 +314,37 @@ api.post('/auth/login', (req, res) => {
     return;
   }
 
-  const clinician = clinicians.byEmail(email);
+  const clinician = clinicians.byEmail(String(email).trim().toLowerCase());
   if (!clinician || !verifyPassword(password, clinician.passwordHash, clinician.passwordSalt)) {
+    // §164.308(a)(5)(ii)(C) — log-in monitoring. Recorded against the email
+    // that was tried, not a clinician, because there may not be one. The same
+    // message either way: which half was wrong is not an attacker's business.
+    audit.record({
+      actor: 'anonymous',
+      actorName: String(email).trim().toLowerCase(),
+      action: 'auth.failed',
+      entityType: 'session',
+      summary: `Failed sign-in for ${String(email).trim().toLowerCase()}.`,
+    });
     res.status(401).json({ error: 'That email and password do not match an account.' });
     return;
   }
+
+  if (!clinician.active) {
+    audit.record({
+      actor: clinician.id,
+      actorName: clinician.name,
+      action: 'auth.failed',
+      entityType: 'session',
+      summary: `Sign-in refused for ${clinician.name}: the account is deactivated.`,
+    });
+    res.status(403).json({
+      error: 'This account has been deactivated. Speak to your administrator.',
+    });
+    return;
+  }
+
+  clinicians.recordSignIn(clinician.id);
 
   // The cookie's maxAge and the token's own lifetime are kept in step; the
   // token is the one that is enforced, since a client can ignore the cookie's.
@@ -295,7 +356,7 @@ api.post('/auth/login', (req, res) => {
     maxAge: hours * 60 * 60 * 1000,
   });
   res.json({
-    clinician: { id: clinician.id, name: clinician.name, credentials: clinician.credentials },
+    clinician: clinicians.byId(clinician.id),
     installation: { mode: installation.mode() },
   });
 });
@@ -385,7 +446,7 @@ api.put('/clinic', requireClinician, (req, res) => {
 
 function buildQueue(clinicianId: string): QueueView {
   const clinician = clinicians.byId(clinicianId)!;
-  const population = patients.forClinician(clinicianId);
+  const population = patients.forClinic();
   const lastRun = populationRuns.last(clinicianId);
 
   const rows: QueueRow[] = population.map((patient) => {
@@ -452,7 +513,7 @@ api.post('/population-run', requireClinician, async (req: AuthedRequest, res) =>
  */
 api.get('/dashboard', requireClinician, (req: AuthedRequest, res) => {
   const clinicianId = req.clinicianId!;
-  const population = patients.forClinician(clinicianId);
+  const population = patients.forClinic();
   const lastRun = populationRuns.last(clinicianId);
   const asOf = new Date();
 
@@ -561,7 +622,7 @@ api.get('/dashboard', requireClinician, (req: AuthedRequest, res) => {
 const STATUS_RANK: Record<string, number> = { critical: 0, watch: 1, managed: 2, stable: 3 };
 
 api.get('/patients', requireClinician, (req: AuthedRequest, res) => {
-  const all = patients.forClinician(req.clinicianId!);
+  const all = patients.forClinic();
 
   const search = String(req.query['search'] ?? '').trim().toLowerCase();
   const sort = String(req.query['sort'] ?? 'status');
@@ -919,7 +980,7 @@ const DISMISSAL_REASONS: DismissalReason[] = [
  */
 api.get('/flags', requireClinician, (req: AuthedRequest, res) => {
   const open = flags.activeForClinician(req.clinicianId!);
-  const byId = new Map(patients.forClinician(req.clinicianId!).map((p) => [p.id, p]));
+  const byId = new Map(patients.forClinic().map((p) => [p.id, p]));
 
   const URGENCY_RANK: Record<string, number> = { critical: 0, watch: 1, stable: 2 };
   const rows = open
@@ -1449,6 +1510,193 @@ api.get('/transcription/token', requireClinician, async (_req, res) => {
       error: 'Could not reach AssemblyAI. Dictation will fall back to the browser.',
     });
   }
+});
+
+/* ----------------------------------------------------------------- users -- */
+
+api.get('/users', requireClinician, (req: AuthedRequest, res) => {
+  const me = clinicians.byId(req.clinicianId!);
+  // Everyone can see who their colleagues are — the audit trail names them, so
+  // hiding the list would only make it harder to read. Only an admin can change
+  // anything, which is enforced on the routes that change things.
+  res.json({ users: clinicians.all(), me });
+});
+
+api.post('/users', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const body = req.body as { name?: string; credentials?: string; email?: string; role?: string };
+  const name = String(body.name ?? '').trim();
+  const email = String(body.email ?? '').trim().toLowerCase();
+  const role = body.role === 'admin' ? 'admin' : 'clinician';
+
+  if (!name) {
+    res.status(400).json({ error: 'Enter the name of the person this account is for.' });
+    return;
+  }
+  if (!email.includes('@')) {
+    res.status(400).json({ error: 'Enter the email address they will sign in with.' });
+    return;
+  }
+  if (clinicians.byEmail(email)) {
+    res.status(409).json({ error: 'Somebody already signs in with that email address.' });
+    return;
+  }
+
+  const password = temporaryPassword();
+  const { hash, salt } = hashPassword(password);
+  const newId = id('clin');
+
+  clinicians.insert({
+    id: newId,
+    name,
+    credentials: String(body.credentials ?? '').trim(),
+    email,
+    passwordHash: hash,
+    passwordSalt: salt,
+    role,
+    mustChangePassword: true,
+  });
+
+  const actor = clinicians.byId(req.clinicianId!);
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: actor?.name ?? 'Unknown clinician',
+    action: 'user.created',
+    entityType: 'clinician',
+    entityId: newId,
+    summary: `Created a ${role} account for ${name} (${email}). A temporary password was issued.`,
+    detail: { role, email },
+  });
+
+  // The only time this is ever readable. It is stored as a salted hash.
+  res.json({ user: clinicians.byId(newId), temporaryPassword: password });
+});
+
+api.post('/users/:id/active', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const target = clinicians.byId(param(req, 'id'));
+  if (!target) {
+    res.status(404).json({ error: 'That account no longer exists.' });
+    return;
+  }
+  const active = Boolean((req.body as { active?: boolean }).active);
+
+  if (!active && target.id === req.clinicianId) {
+    res.status(400).json({ error: 'You cannot deactivate your own account.' });
+    return;
+  }
+  // Losing the last admin means nobody can ever manage accounts again, and
+  // there is no recovery path short of editing the database by hand.
+  if (!active && target.role === 'admin' && clinicians.activeAdminCount() <= 1) {
+    res.status(400).json({ error: 'This is the last active administrator. Promote somebody else first.' });
+    return;
+  }
+
+  clinicians.setActive(target.id, active);
+  const actor = clinicians.byId(req.clinicianId!);
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: actor?.name ?? 'Unknown clinician',
+    action: active ? 'user.reactivated' : 'user.deactivated',
+    entityType: 'clinician',
+    entityId: target.id,
+    summary: active
+      ? `Reactivated ${target.name}'s account.`
+      : `Deactivated ${target.name}'s account. Their sessions ended immediately; their history is kept.`,
+  });
+  res.json({ user: clinicians.byId(target.id) });
+});
+
+api.put('/users/:id/role', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const target = clinicians.byId(param(req, 'id'));
+  if (!target) {
+    res.status(404).json({ error: 'That account no longer exists.' });
+    return;
+  }
+  const role = (req.body as { role?: string }).role === 'admin' ? 'admin' : 'clinician';
+
+  if (role === 'clinician' && target.role === 'admin' && clinicians.activeAdminCount() <= 1) {
+    res.status(400).json({ error: 'This is the last administrator. Promote somebody else first.' });
+    return;
+  }
+
+  clinicians.setRole(target.id, role);
+  const actor = clinicians.byId(req.clinicianId!);
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: actor?.name ?? 'Unknown clinician',
+    action: 'user.role_changed',
+    entityType: 'clinician',
+    entityId: target.id,
+    summary: `Changed ${target.name} from ${target.role} to ${role}.`,
+    detail: { from: target.role, to: role },
+  });
+  res.json({ user: clinicians.byId(target.id) });
+});
+
+api.post('/users/:id/reset-password', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const target = clinicians.byId(param(req, 'id'));
+  if (!target) {
+    res.status(404).json({ error: 'That account no longer exists.' });
+    return;
+  }
+
+  const password = temporaryPassword();
+  const { hash, salt } = hashPassword(password);
+  clinicians.setPassword(target.id, hash, salt, true);
+
+  const actor = clinicians.byId(req.clinicianId!);
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: actor?.name ?? 'Unknown clinician',
+    action: 'user.password_reset',
+    entityType: 'clinician',
+    entityId: target.id,
+    summary: `Reset ${target.name}'s password. Their existing sessions ended and they must set a new one.`,
+  });
+  res.json({ temporaryPassword: password });
+});
+
+/** Anyone can change their own password; nobody else's. */
+api.post('/auth/password', requireClinician, (req: AuthedRequest, res) => {
+  const { current, next: nextPassword } = req.body as { current?: string; next?: string };
+  const me = clinicians.byEmail(clinicians.byId(req.clinicianId!)?.email ?? '');
+  if (!me) {
+    res.status(401).json({ error: ENDED });
+    return;
+  }
+
+  if (!verifyPassword(String(current ?? ''), me.passwordHash, me.passwordSalt)) {
+    res.status(400).json({ error: 'That is not your current password.' });
+    return;
+  }
+  if (String(nextPassword ?? '').length < 10) {
+    res.status(400).json({ error: 'Choose a new password of at least 10 characters.' });
+    return;
+  }
+  if (current === nextPassword) {
+    res.status(400).json({ error: 'The new password has to be different from the old one.' });
+    return;
+  }
+
+  const { hash, salt } = hashPassword(String(nextPassword));
+  clinicians.setPassword(me.id, hash, salt, false);
+
+  audit.record({
+    actor: me.id,
+    actorName: me.name,
+    action: 'password.changed',
+    entityType: 'clinician',
+    entityId: me.id,
+    summary: `${me.name} changed their own password. Sessions opened with the old one ended.`,
+  });
+
+  // Their own session was just invalidated too, so re-issue one.
+  res.cookie?.(config.sessionCookieName, makeSessionToken(me.id, me.tokenVersion + 1), {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.isProd,
+    maxAge: runtime.sessionHours() * 60 * 60 * 1000,
+  });
+  res.json({ ok: true });
 });
 
 /* ------------------------------------------------------------ audit log -- */

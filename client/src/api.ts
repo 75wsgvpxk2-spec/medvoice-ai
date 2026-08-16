@@ -304,6 +304,17 @@ export const api = {
   resolveAlert: (alertId: string) => post<ResolutionOutcome>(`/alerts/${alertId}/resolve`),
   flags: () => request<FlagBoard>('/flags'),
 
+  users: () => request<{ users: Clinician[]; me: Clinician }>('/users'),
+  createUser: (input: { name: string; credentials: string; email: string; role: string }) =>
+    post<{ user: Clinician; temporaryPassword: string }>('/users', input),
+  setUserActive: (id: string, active: boolean) =>
+    post<{ user: Clinician }>(`/users/${id}/active`, { active }),
+  setUserRole: (id: string, role: string) => put<{ user: Clinician }>(`/users/${id}/role`, { role }),
+  resetUserPassword: (id: string) =>
+    post<{ temporaryPassword: string }>(`/users/${id}/reset-password`, {}),
+  changePassword: (current: string, next: string) =>
+    post<{ ok: true }>('/auth/password', { current, next }),
+
   settings: () => request<SettingsView>('/settings'),
   thresholds: () => request<{ thresholds: ThresholdRow[] }>('/thresholds'),
   saveThreshold: (name: string, input: { value: number; reason: string; source: string }) =>

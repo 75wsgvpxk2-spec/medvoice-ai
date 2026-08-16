@@ -128,6 +128,11 @@ const SELF_RECORDING = new Set([
   'DELETE /thresholds/:name',
   'POST /auth/signup',
   'POST /installation/go-live',
+  'POST /users',
+  'POST /users/:id/active',
+  'PUT /users/:id/role',
+  'POST /users/:id/reset-password',
+  'POST /auth/password',
 ]);
 
 export function auditTrail(req: Request, res: Response, next: NextFunction): void {

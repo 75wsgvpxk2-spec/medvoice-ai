@@ -2133,3 +2133,13 @@ tbody tr:hover { background: var(--brand-wash); }
   font-size: var(--text-xs);
   color: rgb(255 255 255 / 64%);
 }
+
+/* Staff accounts ------------------------------------------------------------- */
+
+.row-inactive td {
+  opacity: 0.55;
+}
+
+.row-inactive .pill {
+  opacity: 1;
+}

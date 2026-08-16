@@ -147,7 +147,28 @@ id and that code path is exercised, but with one clinician in the database there
 is no second population to be excluded from, so the scenario cannot demonstrate
 what it is testing.
 
-**Status:** accepted consequence of the single-clinician answer, recorded rather
+**Superseded.** The build now supports multiple staff accounts, and the access
+boundary has moved deliberately: it is the **installation**, not the clinician.
+One deployment serves one clinic, and staff at a clinic share a caseload — a
+nurse who cannot see the patient in front of her because a colleague registered
+them is a system nobody will use.
+
+`patients.forClinic()` is what every route and agent now reads.
+`patients.forClinician()` remains for attribution: which clinician added a
+patient, and which one an assessment ran for. The DI-4 test still passes
+unchanged, because that function is unchanged — but it no longer describes the
+access boundary, and saying so here is the point of this note.
+
+What replaces DI-4's intent is unique user identification
+(§164.312(a)(2)(i)): each person signs in as themselves, deactivation ends
+their sessions on the next request, and every audit row names the individual
+rather than a shared account. That was verified end to end — two users, one
+population, and a dismissal attributed to the nurse who made it.
+
+A deployment serving two clinics from one database is **not supported**, and
+this change makes that explicit rather than implied.
+
+**Original status:** accepted consequence of the single-clinician answer, recorded rather
 than passed. Adding a second clinician with a small population would make it
 verifiable.
 

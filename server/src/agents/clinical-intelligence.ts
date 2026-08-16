@@ -260,7 +260,7 @@ export async function assessPatient(
  * across repeated runs over unchanged data (A3-7).
  */
 export function rerankQueue(clinicianId: string): string[] {
-  const scored = patients.forClinician(clinicianId).map((patient) => {
+  const scored = patients.forClinic().map((patient) => {
     const active = flags.activeForPatient(patient.id);
     const daysSince = encounters.daysSinceLast(patient.id);
 
@@ -303,7 +303,7 @@ export async function assessPopulation(
   const correlationId = options.correlationId ?? id('corr');
   const startedAt = Date.now();
 
-  const population = patients.forClinician(clinicianId);
+  const population = patients.forClinic();
   const runId = runs.start({
     agent: AGENT,
     trigger,

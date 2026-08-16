@@ -395,7 +395,7 @@ export async function scanPopulation(
   const correlationId = options.correlationId ?? id('corr');
   const startedAt = Date.now();
 
-  const population = patients.forClinician(clinicianId);
+  const population = patients.forClinic();
   const runId = runs.start({
     agent: AGENT,
     trigger: options.trigger ?? 'population_run',

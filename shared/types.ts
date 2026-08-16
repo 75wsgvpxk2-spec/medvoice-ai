@@ -332,11 +332,20 @@ export interface BillingEntry {
 // Section 4 — Clinician
 // ---------------------------------------------------------------------------
 
+export type ClinicianRole = 'admin' | 'clinician';
+
 export interface Clinician {
   id: string;
   name: string;
   credentials: string;
   email: string;
+  role: ClinicianRole;
+  /** Deactivated users keep their history; only their access is withdrawn. */
+  active: boolean;
+  /** True while a temporary password is in force. */
+  mustChangePassword: boolean;
+  createdAt: string | null;
+  lastSignInAt: string | null;
 }
 
 /** The clinic this installation belongs to. A single record. */

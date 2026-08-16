@@ -96,6 +96,7 @@ async function main(): Promise<void> {
     email,
     passwordHash: hash,
     passwordSalt: salt,
+    role: 'admin',
   });
 
   clinicRepo.save({

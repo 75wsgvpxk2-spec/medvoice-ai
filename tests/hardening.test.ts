@@ -229,3 +229,50 @@ describe('CS-2 [CRITICAL]  Nothing in the copy implies a diagnosis', () => {
     }
   }, 300_000);
 });
+
+describe('Multi-user access — §164.312(a)(2)(i) unique user identification', () => {
+  beforeAll(() => {
+    freshPopulation();
+  });
+
+  it('gives every member of staff the same population', () => {
+    // The access boundary is the installation, not the clinician: staff at one
+    // clinic share a caseload. See docs/DEVIATIONS.md item 2.
+    const clinicWide = patients.forClinic();
+    expect(clinicWide.length).toBe(15);
+
+    // A second clinician, who owns none of the patients by attribution, still
+    // sees all of them.
+    clinicians.insert({
+      id: 'clin_nurse',
+      name: 'Nurse Joy Blenman',
+      credentials: 'RN',
+      email: 'joy@example.com',
+      passwordHash: 'x',
+      passwordSalt: 'y',
+    });
+    expect(patients.forClinician('clin_nurse')).toEqual([]);
+    expect(patients.forClinic().length).toBe(clinicWide.length);
+  });
+
+  it('deactivates rather than deletes, so audit history keeps a name', () => {
+    const before = clinicians.byId('clin_nurse')!;
+    expect(before.active).toBe(true);
+    expect(before.role).toBe('clinician');
+
+    clinicians.setActive('clin_nurse', false);
+    const after = clinicians.byId('clin_nurse')!;
+
+    // Still resolvable — an audit row from last month must still say who.
+    expect(after).not.toBeNull();
+    expect(after.name).toBe('Nurse Joy Blenman');
+    expect(after.active).toBe(false);
+    // Deactivating bumps the token version, which is what ends live sessions.
+    expect(clinicians.tokenVersion('clin_nurse')).toBeGreaterThan(before ? 1 : 0);
+  });
+
+  it('never leaves an installation with no administrator', () => {
+    // The seeded clinician is the admin; the nurse is not.
+    expect(clinicians.activeAdminCount()).toBe(1);
+  });
+});

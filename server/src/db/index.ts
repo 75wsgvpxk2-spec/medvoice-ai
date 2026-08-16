@@ -41,11 +41,27 @@ function migrate(conn: Database.Database): void {
     ['clinic', 'brand_light', "TEXT NOT NULL DEFAULT ''"],
     ['clinic', 'primary_doctor', "TEXT NOT NULL DEFAULT ''"],
     ['model_call', 'degraded_reason', 'TEXT'],
+    // The first account on an existing install becomes the admin; see migrate().
+    ['clinician', 'role', "TEXT NOT NULL DEFAULT 'clinician'"],
+    ['clinician', 'active', 'INTEGER NOT NULL DEFAULT 1'],
+    ['clinician', 'must_change_password', 'INTEGER NOT NULL DEFAULT 0'],
+    ['clinician', 'created_at', 'TEXT'],
+    ['clinician', 'last_sign_in_at', 'TEXT'],
   ];
   for (const [table, column, definition] of added) {
     const columns = conn.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (columns.some((c) => c.name === column)) continue;
     conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+
+  // An installation that predates roles has one account, and it is the person
+  // who set the clinic up. Leaving them a plain clinician would lock everyone
+  // out of user management on the very upgrade that introduces it.
+  const admins = conn.prepare("SELECT COUNT(*) AS n FROM clinician WHERE role = 'admin'").get() as {
+    n: number;
+  };
+  if (admins.n === 0) {
+    conn.exec("UPDATE clinician SET role = 'admin' WHERE id = (SELECT id FROM clinician LIMIT 1)");
   }
 }
 

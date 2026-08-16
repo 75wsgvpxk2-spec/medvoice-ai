@@ -73,6 +73,7 @@ export function seed(options: { clinicianId?: string } = {}): SeedResult {
       email: config.clinicianEmail,
       passwordHash: hash,
       passwordSalt: salt,
+      role: 'admin',
     });
   }
 
