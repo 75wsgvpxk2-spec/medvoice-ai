@@ -1,0 +1,163 @@
+/*
+ * MedVoice AI — design tokens.
+ *
+ * Section 9 of the build document asked for an austere, colourless tool. The
+ * product owner has since supplied a brand and asked twice for a modern,
+ * colourful interface, so that constraint is deliberately relaxed — recorded in
+ * docs/DEVIATIONS.md.
+ *
+ * What is NOT relaxed: red, amber and green still mean urgency and only
+ * urgency. Brand blue carries structure and action; it never appears as a
+ * status. A patient's state is always colour AND marker shape AND a word, so
+ * the queue still reads in greyscale (PA-1).
+ */
+
+:root {
+  /* Brand, taken from the MedVoice AI mark. */
+  --brand-navy: #0f3355;
+  --brand-deep: #1565c0;
+  --brand-blue: #1e7bc8;
+  --brand-light: #4fb3e8;
+  --brand-glow: #7cc9f0;
+  --brand-wash: #eff7fd;
+  --brand-line: #cfe6f7;
+  --brand-gradient: linear-gradient(135deg, #0f3355 0%, #1565c0 55%, #2f92d6 100%);
+  --brand-gradient-soft: linear-gradient(135deg, #eff7fd 0%, #e3f1fb 100%);
+
+  /* Ground and surfaces. A faintly blue ground makes white cards lift. */
+  --ground: #f2f6fb;
+  --surface: #ffffff;
+  --surface-sunken: #eef3f9;
+  --surface-raised: #ffffff;
+
+  --ink: #10202f;
+  --ink-secondary: #38495c;
+  --ink-muted: #667789;
+  --ink-onbrand: #ffffff;
+
+  --line: #e4ebf3;
+  --line-strong: #c8d5e3;
+
+  /* Urgency. The only clinical colour, each with a tint for backgrounds. */
+  --critical: #c0272d;
+  --critical-ink: #8c1c21;
+  --critical-ground: #fdeeef;
+  --critical-line: #f3ccce;
+
+  --watch: #a45c04;
+  --watch-ink: #7d4603;
+  --watch-ground: #fdf4e7;
+  --watch-line: #f2ddbd;
+
+  --stable: #4d5763;
+  --stable-ground: #f1f4f8;
+  --stable-line: #dde4ec;
+
+  --managed: #10745a;
+  --managed-ink: #0b5844;
+  --managed-ground: #e8f6f1;
+  --managed-line: #bfe3d7;
+
+  --focus: var(--brand-blue);
+
+  /* Two faces: one for interface and data, one for clinical narrative. */
+  --font-ui: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-clinical: ui-serif, Georgia, Cambria, 'Times New Roman', serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.125rem;
+
+  --gap-1: 0.25rem;
+  --gap-2: 0.5rem;
+  --gap-3: 0.75rem;
+  --gap-4: 1rem;
+  --gap-5: 1.5rem;
+  --gap-6: 2rem;
+
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
+
+  /* Light, layered shadows — depth without heaviness. */
+  --shadow-xs: 0 1px 2px rgb(15 51 85 / 5%);
+  --shadow-sm: 0 1px 2px rgb(15 51 85 / 5%), 0 2px 6px rgb(15 51 85 / 4%);
+  --shadow: 0 2px 4px rgb(15 51 85 / 5%), 0 6px 16px rgb(15 51 85 / 6%);
+  --shadow-lg: 0 12px 32px rgb(15 51 85 / 12%), 0 4px 10px rgb(15 51 85 / 6%);
+  --shadow-brand: 0 4px 14px rgb(21 101 192 / 26%);
+  --shadow-focus: 0 0 0 3px rgb(30 123 200 / 20%);
+
+  --sidebar-width: 224px;
+  --touch: 44px;
+  --rerank-duration: 480ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Values align in columns wherever they are compared. */
+.tabular,
+td,
+.value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Reduced motion turns the re-rank into an instant reorder (PA-2). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

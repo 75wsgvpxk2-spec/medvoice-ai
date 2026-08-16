@@ -1,0 +1,1178 @@
+import express, { type Request, type Response, type NextFunction } from 'express';
+import { config } from '../lib/config.ts';
+import { makeSessionToken, readSessionToken, verifyPassword } from '../lib/auth.ts';
+import {
+  clinicians,
+  clinic,
+  patients,
+  encounters,
+  observations,
+  flags,
+  alerts,
+  orders,
+  billing,
+  runs,
+  populationRuns,
+  ageFrom,
+  audit,
+  pronunciations,
+} from '../db/repositories.ts';
+import * as runtime from '../lib/settings.ts';
+import * as thresholds from '../lib/thresholds.ts';
+import * as installation from '../lib/installation.ts';
+import { describeThresholds, isThresholdName } from '../lib/thresholds.ts';
+import { TH, verifyReference } from '../clinical/reference.ts';
+import { auditTrail } from './audit-trail.ts';
+import { submitEncounter, approveEncounter, runPopulation, amendEncounter } from '../orchestration/triggers.ts';
+import { resolveAlert, previewResolution, completeOrder } from '../agents/resolution.ts';
+import { assessPatientRun, fingerprintOf, rerankQueue } from '../agents/clinical-intelligence.ts';
+import { evaluate } from '../clinical/rules.ts';
+import { assessMonitoring } from '../clinical/monitoring.ts';
+import { subscribe } from '../orchestration/events.ts';
+import { summariseSpend } from '../model/spend.ts';
+import { id } from '../db/index.ts';
+import type {
+  ClinicSettings,
+  DismissalReason,
+  Patient,
+  PatientProfile,
+  QueueRow,
+  QueueView,
+  Sex,
+  UnitPreferences,
+} from '../../../shared/types.ts';
+import { BLOOD_TYPES } from '../../../shared/types.ts';
+
+export const api = express.Router();
+api.use(express.json({ limit: '4mb' }));  // headroom for a base64 clinic logo
+// Mounted before every route, so no change can be added later that escapes it.
+api.use(auditTrail);
+
+/* ------------------------------------------------------------------ auth -- */
+
+interface AuthedRequest extends Request {
+  clinicianId?: string;
+}
+
+/** Express 5 types a route param as string | string[]; routes here take one. */
+function param(req: Request, name: string): string {
+  const value = req.params[name as keyof typeof req.params] as string | string[] | undefined;
+  return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
+}
+
+function readCookie(req: Request, name: string): string | undefined {
+  const header = req.headers.cookie;
+  if (!header) return undefined;
+  for (const part of header.split(';')) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key === name) return decodeURIComponent(rest.join('='));
+  }
+  return undefined;
+}
+
+/** DI-4: every route below this is scoped to the signed-in clinician. */
+function requireClinician(req: AuthedRequest, res: Response, next: NextFunction): void {
+  const clinicianId = readSessionToken(readCookie(req, config.sessionCookieName));
+  if (!clinicianId || !clinicians.byId(clinicianId)) {
+    res.status(401).json({ error: 'Your session has ended. Sign in again to continue.' });
+    return;
+  }
+  req.clinicianId = clinicianId;
+  next();
+}
+/* ---------------------------------------------------------------- health -- */
+
+/**
+ * Unauthenticated liveness check, for container orchestration.
+ *
+ * Deliberately says almost nothing: whether the process is up and whether the
+ * clinical reference parsed. Anything more would be describing a clinic's
+ * installation to anyone who can reach the port.
+ */
+api.get('/health', (_req, res) => {
+  const reference = verifyReference();
+  res.status(reference.ok ? 200 : 503).json({
+    status: reference.ok ? 'ok' : 'degraded',
+    reference: { ok: reference.ok, checked: reference.checked },
+  });
+});
+
+
+api.post('/auth/login', (req, res) => {
+  const { email, password } = req.body as { email?: string; password?: string };
+
+  // Errors name what went wrong and are never vague (8.1, UI-7).
+  if (!email) {
+    res.status(400).json({ error: 'Enter your email address.' });
+    return;
+  }
+  if (!password) {
+    res.status(400).json({ error: 'Enter your password.' });
+    return;
+  }
+
+  const clinician = clinicians.byEmail(email);
+  if (!clinician || !verifyPassword(password, clinician.passwordHash, clinician.passwordSalt)) {
+    res.status(401).json({ error: 'That email and password do not match an account.' });
+    return;
+  }
+
+  res.cookie?.(config.sessionCookieName, makeSessionToken(clinician.id), {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.isProd,
+    maxAge: 12 * 60 * 60 * 1000,
+  });
+  res.json({
+    clinician: { id: clinician.id, name: clinician.name, credentials: clinician.credentials },
+    installation: { mode: installation.mode() },
+  });
+});
+
+api.post('/auth/logout', (_req, res) => {
+  res.clearCookie?.(config.sessionCookieName);
+  res.json({ ok: true });
+});
+
+api.get('/auth/me', requireClinician, (req: AuthedRequest, res) => {
+  // The mode rides along with the session: the interface has to label a demo
+  // database on every screen, and it learns which it is on the first request.
+  res.json({
+    clinician: clinicians.byId(req.clinicianId!),
+    installation: { mode: installation.mode() },
+  });
+});
+
+/* ---------------------------------------------------------------- clinic -- */
+
+api.get('/clinic', requireClinician, (_req, res) => {
+  res.json({ clinic: clinic.get() });
+});
+
+/** Roughly 1.5 MB of base64, which is a generous logo and a poor photograph. */
+const MAX_LOGO_CHARS = 2_000_000;
+
+api.put('/clinic', requireClinician, (req, res) => {
+  const body = req.body as Partial<Record<string, string | null>>;
+
+  const logo = body['logo'] ?? null;
+  if (logo !== null) {
+    if (typeof logo !== 'string' || !/^data:image\/(png|jpeg|svg\+xml|webp|gif);base64,/.test(logo)) {
+      res.status(400).json({
+        error: 'The logo must be a PNG, JPEG, SVG, WebP or GIF image. Choose a different file.',
+      });
+      return;
+    }
+    if (logo.length > MAX_LOGO_CHARS) {
+      res.status(400).json({ error: 'That image is too large. Use one under about 1.5 MB.' });
+      return;
+    }
+  }
+
+  const text = (key: string): string => String(body[key] ?? '').trim();
+
+  res.json({
+    clinic: clinic.save({
+      name: text('name'),
+      legalName: text('legalName'),
+      registration: text('registration'),
+      address: text('address'),
+      phone: text('phone'),
+      email: text('email'),
+      website: text('website'),
+      logo,
+    }),
+  });
+});
+
+/* ----------------------------------------------------------------- queue -- */
+
+function buildQueue(clinicianId: string): QueueView {
+  const clinician = clinicians.byId(clinicianId)!;
+  const population = patients.forClinician(clinicianId);
+  const lastRun = populationRuns.last(clinicianId);
+
+  const rows: QueueRow[] = population.map((patient) => {
+    const active = flags.activeForPatient(patient.id);
+    // Section 9: the one line of clinical reasoning is the most valuable text
+    // on the screen, so the highest-urgency flag's reasoning leads.
+    const order = { critical: 0, watch: 1, stable: 2 } as const;
+    const lead = [...active].sort((a, b) => order[a.urgency] - order[b.urgency])[0];
+
+    return {
+      patient,
+      reasoning: lead?.reasoning ?? '',
+      daysSinceLastEncounter: encounters.daysSinceLast(patient.id),
+      openAlertCount: alerts.openCount(patient.id),
+      activeFlagCount: active.length,
+      topUrgency: lead?.urgency ?? null,
+    };
+  });
+
+  // Ranked patients first, in queue order; everyone else by name.
+  rows.sort((a, b) => {
+    const ap = a.patient.queuePosition;
+    const bp = b.patient.queuePosition;
+    if (ap !== null && bp !== null) return ap - bp;
+    if (ap !== null) return -1;
+    if (bp !== null) return 1;
+    return a.patient.name.localeCompare(b.patient.name);
+  });
+
+  return {
+    clinician,
+    rows,
+    lastPopulationRunAt: lastRun?.completedAt ?? null,
+    lastPopulationRunOutcome: lastRun?.outcome ?? null,
+    neverRun: lastRun === null,
+    attentionCount: rows.filter(
+      (r) => r.patient.status === 'critical' || r.patient.status === 'watch',
+    ).length,
+  };
+}
+
+api.get('/queue', requireClinician, (req: AuthedRequest, res) => {
+  res.json(buildQueue(req.clinicianId!));
+});
+
+api.post('/population-run', requireClinician, async (req: AuthedRequest, res) => {
+  try {
+    const result = await runPopulation(req.clinicianId!);
+    res.json({ ...result, queue: buildQueue(req.clinicianId!) });
+  } catch (error) {
+    res.status(500).json({
+      error: 'The assessment could not be completed. The queue below is the last known result.',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+/* ------------------------------------------------------------- dashboard -- */
+
+/**
+ * One aggregate rather than a page that fans out into a dozen requests. The
+ * figures here are counts of records the agents produced — nothing is computed
+ * twice, and nothing is a clinical judgement made in this file.
+ */
+api.get('/dashboard', requireClinician, (req: AuthedRequest, res) => {
+  const clinicianId = req.clinicianId!;
+  const population = patients.forClinician(clinicianId);
+  const lastRun = populationRuns.last(clinicianId);
+  const asOf = new Date();
+
+  const byStatus = { critical: 0, watch: 0, managed: 0, stable: 0 };
+  let openAlerts = 0;
+  let activeFlags = 0;
+  let uncertainFlags = 0;
+  let outstandingOrders = 0;
+  let neverAssessed = 0;
+  let overdueFollowUp = 0;
+  let overdueMonitoring = 0;
+
+  const alertsByType: Record<string, number> = {};
+  const attention: Array<{
+    patientId: string;
+    name: string;
+    status: string;
+    reasoning: string;
+    daysSince: number | null;
+    openAlerts: number;
+  }> = [];
+
+  for (const patient of population) {
+    byStatus[patient.status] += 1;
+    if (patient.lastAssessedAt === null) neverAssessed += 1;
+
+    const active = flags.activeForPatient(patient.id);
+    activeFlags += active.length;
+    uncertainFlags += active.filter((f) => f.confidence === 'uncertain').length;
+    if (active.some((f) => f.flagType === 'overdue_followup')) overdueFollowUp += 1;
+
+    const open = alerts.openForPatient(patient.id);
+    openAlerts += open.length;
+    for (const alert of open) {
+      alertsByType[alert.gapType] = (alertsByType[alert.gapType] ?? 0) + 1;
+    }
+
+    outstandingOrders += orders.forPatient(patient.id).filter((o) => o.status === 'requested').length;
+
+    if (
+      assessMonitoring(patient, observations.forPatient(patient.id), asOf).some((m) => m.overdue)
+    ) {
+      overdueMonitoring += 1;
+    }
+
+    if (patient.queuePosition !== null) {
+      const order = { critical: 0, watch: 1, stable: 2 } as const;
+      const lead = [...active].sort((a, b) => order[a.urgency] - order[b.urgency])[0];
+      attention.push({
+        patientId: patient.id,
+        name: patient.name,
+        status: patient.status,
+        reasoning: lead?.reasoning ?? '',
+        daysSince: encounters.daysSinceLast(patient.id),
+        openAlerts: open.length,
+      });
+    }
+  }
+
+  attention.sort(
+    (a, b) =>
+      (population.find((p) => p.id === a.patientId)?.queuePosition ?? 0) -
+      (population.find((p) => p.id === b.patientId)?.queuePosition ?? 0),
+  );
+
+  // Agent health over the recent log, so a failing agent is visible here and
+  // not only on the activity screen.
+  const recent = runs.recent(200);
+  const completed = recent.filter((r) => r.outcome !== 'running');
+  const failed = completed.filter((r) => r.outcome === 'failure');
+  const durations = completed.map((r) => r.durationMs ?? 0).filter((d) => d > 0);
+
+  res.json({
+    population: population.length,
+    byStatus,
+    needingAttention: byStatus.critical + byStatus.watch,
+    activeFlags,
+    uncertainFlags,
+    openAlerts,
+    alertsByType,
+    outstandingOrders,
+    neverAssessed,
+    overdueFollowUp,
+    overdueMonitoring,
+    attention: attention.slice(0, 5),
+    lastRun,
+    agents: {
+      runs: completed.length,
+      failed: failed.length,
+      medianDurationMs:
+        durations.length > 0
+          ? durations.sort((a, b) => a - b)[Math.floor(durations.length / 2)] ?? 0
+          : 0,
+    },
+    spend: summariseSpend(),
+  });
+});
+
+/* --------------------------------------------------------------- patient -- */
+
+/**
+ * Paged, searched and sorted on the server. Doing this in the client means
+ * fetching the whole population to show twenty of them, which is fine at
+ * fifteen patients and wrong at five thousand.
+ */
+const STATUS_RANK: Record<string, number> = { critical: 0, watch: 1, managed: 2, stable: 3 };
+
+api.get('/patients', requireClinician, (req: AuthedRequest, res) => {
+  const all = patients.forClinician(req.clinicianId!);
+
+  const search = String(req.query['search'] ?? '').trim().toLowerCase();
+  const sort = String(req.query['sort'] ?? 'status');
+  const page = Math.max(1, Number(req.query['page'] ?? 1) || 1);
+  const pageSize = Math.min(100, Math.max(5, Number(req.query['pageSize'] ?? 10) || 10));
+
+  const statuses = String(req.query['status'] ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s in STATUS_RANK);
+  const condition = String(req.query['condition'] ?? '').trim().toLowerCase();
+  const neverAssessed = req.query['neverAssessed'] === 'true';
+
+  const bySearch = search
+    ? all.filter(
+        (p) =>
+          p.name.toLowerCase().includes(search) ||
+          p.conditions.some((c) => c.name.toLowerCase().includes(search)),
+      )
+    : all;
+
+  const byStatus = (p: (typeof all)[number]) =>
+    statuses.length === 0 || statuses.includes(p.status);
+  const byCondition = (p: (typeof all)[number]) =>
+    condition === '' || p.conditions.some((c) => c.name.toLowerCase() === condition);
+  const byAssessed = (p: (typeof all)[number]) => !neverAssessed || p.lastAssessedAt === null;
+
+  const matched = bySearch.filter((p) => byStatus(p) && byCondition(p) && byAssessed(p));
+
+  /* Facet counts leave out the filter they describe, so the number beside
+     "Watch" is how many you would get by clicking it — not how many are
+     showing now, which would always read zero for every unselected option. */
+  const countStatus = bySearch.filter((p) => byCondition(p) && byAssessed(p));
+  const statusFacets: Record<string, number> = { critical: 0, watch: 0, managed: 0, stable: 0 };
+  for (const p of countStatus) statusFacets[p.status] = (statusFacets[p.status] ?? 0) + 1;
+
+  const countCondition = bySearch.filter((p) => byStatus(p) && byAssessed(p));
+  const conditionCounts = new Map<string, number>();
+  for (const p of countCondition) {
+    // A patient with the same condition listed twice must still count once.
+    for (const name of new Set(p.conditions.map((c) => c.name))) {
+      conditionCounts.set(name, (conditionCounts.get(name) ?? 0) + 1);
+    }
+  }
+  const conditionFacets = [...conditionCounts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+  const neverAssessedCount = bySearch.filter(
+    (p) => byStatus(p) && byCondition(p) && p.lastAssessedAt === null,
+  ).length;
+
+  const sorted = [...matched].sort((a, b) => {
+    if (sort === 'name') return a.name.localeCompare(b.name);
+    if (sort === 'lastSeen') {
+      // Never assessed sorts last rather than first, which is what an empty
+      // string would do.
+      const av = a.lastAssessedAt ?? '';
+      const bv = b.lastAssessedAt ?? '';
+      if (av === bv) return a.name.localeCompare(b.name);
+      if (av === '') return 1;
+      if (bv === '') return -1;
+      return bv.localeCompare(av);
+    }
+    return (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || a.name.localeCompare(b.name);
+  });
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  // A search that shrinks the results below the current page would otherwise
+  // show an empty list with no way back.
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+
+  res.json({
+    patients: sorted.slice(start, start + pageSize),
+    total: sorted.length,
+    totalUnfiltered: all.length,
+    page: safePage,
+    pageSize,
+    totalPages,
+    facets: {
+      status: statusFacets,
+      conditions: conditionFacets,
+      neverAssessed: neverAssessedCount,
+    },
+  });
+});
+
+/**
+ * Trim every field and drop anything the client invented. Administrative detail
+ * is free text by nature, so the guarantee here is shape, not content: the
+ * record can never carry a key the type does not declare.
+ */
+function sanitiseProfile(raw: Partial<PatientProfile> | undefined): PatientProfile {
+  const text = (v: unknown, max = 200): string => String(v ?? '').trim().slice(0, max);
+  return {
+    dateOfBirth: text(raw?.dateOfBirth, 10),
+    bloodType: text(raw?.bloodType, 3) as PatientProfile['bloodType'],
+    phone: text(raw?.phone, 40),
+    email: text(raw?.email, 120),
+    address: text(raw?.address),
+    preferredLanguage: text(raw?.preferredLanguage, 60),
+    maritalStatus: text(raw?.maritalStatus, 40),
+    occupation: text(raw?.occupation, 80),
+    emergencyContact: {
+      name: text(raw?.emergencyContact?.name, 120),
+      relationship: text(raw?.emergencyContact?.relationship, 60),
+      phone: text(raw?.emergencyContact?.phone, 40),
+    },
+    insurance: {
+      provider: text(raw?.insurance?.provider, 120),
+      policyNumber: text(raw?.insurance?.policyNumber, 60),
+      expiresOn: text(raw?.insurance?.expiresOn, 10),
+    },
+    notes: text(raw?.notes, 500),
+  };
+}
+
+/** Add a patient to this clinician's population. */
+api.post('/patients', requireClinician, (req: AuthedRequest, res) => {
+  const body = req.body as {
+    name?: string;
+    age?: number;
+    sex?: string;
+    conditions?: Array<{ name: string; diagnosedOn: string }>;
+    medications?: Array<{ name: string; dose: string; frequency: string; startedOn: string }>;
+    allergies?: string[];
+    profile?: Partial<PatientProfile>;
+  };
+
+  // Errors name what is wrong and what to do about it (UI-7).
+  const name = body.name?.trim();
+  if (!name) {
+    res.status(400).json({ error: 'Enter the patient name.' });
+    return;
+  }
+
+  const profile = sanitiseProfile(body.profile);
+
+  // Date of birth wins when it is given: it is the fact on the record, and an
+  // age typed alongside it goes stale on the next birthday.
+  let age = Number(body.age);
+  if (profile.dateOfBirth) {
+    const born = new Date(profile.dateOfBirth);
+    if (Number.isNaN(born.getTime()) || born > new Date()) {
+      res.status(400).json({ error: 'Enter a date of birth in the past, as YYYY-MM-DD.' });
+      return;
+    }
+    age = ageFrom(profile.dateOfBirth, age);
+  }
+  if (!Number.isInteger(age) || age < 0 || age > 120) {
+    res.status(400).json({
+      error: 'Enter a date of birth, or an age between 0 and 120.',
+    });
+    return;
+  }
+  if (profile.bloodType && !BLOOD_TYPES.includes(profile.bloodType)) {
+    res.status(400).json({ error: 'Choose a blood type from the list, or leave it blank.' });
+    return;
+  }
+  if (body.sex !== 'female' && body.sex !== 'male') {
+    res.status(400).json({ error: 'Choose whether the patient is female or male.' });
+    return;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const conditions = (body.conditions ?? [])
+    .filter((c) => c.name?.trim())
+    .map((c) => ({ name: c.name.trim(), diagnosedOn: c.diagnosedOn?.trim() || today }));
+  const medications = (body.medications ?? [])
+    .filter((m) => m.name?.trim())
+    .map((m) => ({
+      name: m.name.trim(),
+      dose: m.dose?.trim() ?? '',
+      frequency: m.frequency?.trim() ?? '',
+      startedOn: m.startedOn?.trim() || today,
+    }));
+
+  const patient: Patient = {
+    id: id('pat'),
+    name,
+    age,
+    // Narrowed by the guard above; the union is what the record stores.
+    sex: body.sex as Sex,
+    conditions,
+    medications,
+    allergies: (body.allergies ?? []).map((a) => a.trim()).filter(Boolean),
+    clinicianId: req.clinicianId!,
+    // A new patient has no findings until an agent has looked at them. Stable
+    // means no risk was identified; that is only true once something has run.
+    status: 'stable' as const,
+    queuePosition: null,
+    lastAssessedAt: null,
+    profile,
+  };
+
+  patients.insert(patient);
+  res.status(201).json({ patient });
+});
+
+api.get('/patients/:id', requireClinician, (req: AuthedRequest, res) => {
+  const patient = patients.byId(param(req, 'id'));
+  // DI-4: a patient outside this clinician's population is not found.
+  if (!patient || patient.clinicianId !== req.clinicianId) {
+    res.status(404).json({ error: 'That patient is not in your population.' });
+    return;
+  }
+
+  res.json({
+    patient,
+    flags: flags.activeForPatient(patient.id),
+    dismissedFlags: flags.dismissedForPatient(patient.id),
+    alerts: alerts.openForPatient(patient.id),
+    orders: orders.forPatient(patient.id),
+    billing: billing.forPatient(patient.id),
+    observations: observations.forPatient(patient.id),
+    encounters: encounters.forPatient(patient.id),
+  });
+});
+
+/* ------------------------------------------------------------- encounter -- */
+
+api.post('/patients/:id/encounters', requireClinician, async (req: AuthedRequest, res) => {
+  const patient = patients.byId(param(req, 'id'));
+  if (!patient || patient.clinicianId !== req.clinicianId) {
+    res.status(404).json({ error: 'That patient is not in your population.' });
+    return;
+  }
+
+  const { note } = req.body as { note?: string };
+  try {
+    const result = await submitEncounter(patient.id, note ?? '', req.clinicianId!);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : 'The note could not be processed.',
+    });
+  }
+});
+
+api.post('/encounters/:id/approve', requireClinician, async (req: AuthedRequest, res) => {
+  const { edits, fieldConfidence } = req.body as {
+    edits?: Record<string, string>;
+    fieldConfidence?: Array<{ field: string; confidence: 'confident' | 'flagged'; ambiguity?: string }>;
+  };
+
+  try {
+    const result = await approveEncounter(param(req, 'id'), req.clinicianId!, {
+      edits: edits as never,
+      fieldConfidence: fieldConfidence as never,
+    });
+    res.json({ ...result, queue: buildQueue(req.clinicianId!) });
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : 'The encounter could not be approved.',
+    });
+  }
+});
+
+api.post('/encounters/:id/amend', requireClinician, async (req: AuthedRequest, res) => {
+  const { edits } = req.body as { edits?: Record<string, string> };
+  try {
+    const result = await amendEncounter(param(req, 'id'), req.clinicianId!, (edits ?? {}) as never);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : 'The encounter could not be amended.',
+    });
+  }
+});
+
+/* ------------------------------------------------------- alerts and flags -- */
+
+api.get('/alerts/:id/preview', requireClinician, (req, res) => {
+  const preview = previewResolution(param(req, 'id'));
+  if (!preview) {
+    res.status(404).json({ error: 'That alert no longer exists.' });
+    return;
+  }
+  res.json(preview);
+});
+
+api.post('/alerts/:id/resolve', requireClinician, async (req: AuthedRequest, res) => {
+  try {
+    const outcome = await resolveAlert(param(req, 'id'), req.clinicianId!);
+    res.json({ ...outcome, queue: buildQueue(req.clinicianId!) });
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : 'That alert could not be resolved.',
+    });
+  }
+});
+
+const DISMISSAL_REASONS: DismissalReason[] = [
+  'not_clinically_relevant',
+  'already_addressed',
+  'disagree_with_assessment',
+];
+
+/** Human decision point three — the only place a clinician tells the system it is wrong. */
+/**
+ * Every open flag across the population, for the flag management screen.
+ *
+ * The patient's name and status ride along: a flag read outside a patient
+ * record is meaningless without knowing whose it is, and a second request per
+ * flag to find out would make the screen slower the more work there is to do.
+ */
+api.get('/flags', requireClinician, (req: AuthedRequest, res) => {
+  const open = flags.activeForClinician(req.clinicianId!);
+  const byId = new Map(patients.forClinician(req.clinicianId!).map((p) => [p.id, p]));
+
+  const URGENCY_RANK: Record<string, number> = { critical: 0, watch: 1, stable: 2 };
+  const rows = open
+    .map((flag) => {
+      const patient = byId.get(flag.patientId);
+      return {
+        flag,
+        patientName: patient?.name ?? 'Unknown patient',
+        patientStatus: patient?.status ?? 'stable',
+        patientAge: patient?.age ?? 0,
+        patientSex: patient?.sex ?? 'female',
+      };
+    })
+    .sort(
+      (a, b) =>
+        (URGENCY_RANK[a.flag.urgency] ?? 9) - (URGENCY_RANK[b.flag.urgency] ?? 9) ||
+        b.flag.createdAt.localeCompare(a.flag.createdAt),
+    );
+
+  const byUrgency: Record<string, number> = { critical: 0, watch: 0, stable: 0 };
+  for (const r of rows) byUrgency[r.flag.urgency] = (byUrgency[r.flag.urgency] ?? 0) + 1;
+
+  res.json({
+    flags: rows,
+    total: rows.length,
+    byUrgency,
+    uncertain: rows.filter((r) => r.flag.confidence === 'uncertain').length,
+  });
+});
+
+api.post('/flags/:id/dismiss', requireClinician, async (req: AuthedRequest, res) => {
+  const { reason } = req.body as { reason?: DismissalReason };
+
+  if (!reason || !DISMISSAL_REASONS.includes(reason)) {
+    res.status(400).json({
+      error: 'Choose a reason for dismissing this flag: not clinically relevant, already addressed, or disagree with the assessment.',
+    });
+    return;
+  }
+
+  const flag = flags.byId(param(req, 'id'));
+  if (!flag) {
+    res.status(404).json({ error: 'That flag no longer exists.' });
+    return;
+  }
+
+  const patient = patients.byId(flag.patientId);
+  if (!patient || patient.clinicianId !== req.clinicianId) {
+    res.status(404).json({ error: 'That patient is not in your population.' });
+    return;
+  }
+
+  // FD-4: record the clinical picture at dismissal, so the flag returns only
+  // when the underlying data moves materially.
+  const findings = evaluate(
+    {
+      patient,
+      observations: observations.forPatient(patient.id),
+      encounters: encounters.approvedForPatient(patient.id),
+      daysSinceLastEncounter: encounters.daysSinceLast(patient.id),
+    },
+    new Date(),
+  );
+  const finding = findings.find((f) => f.flagType === flag.flagType);
+
+  flags.dismiss(flag.id, reason, req.clinicianId!, finding ? fingerprintOf(finding) : 'unknown');
+
+  const assessment = await assessPatientRun(patient.id, {
+    trigger: 'flag_dismissal',
+    correlationId: id('corr'),
+  });
+  rerankQueue(req.clinicianId!);
+
+  res.json({ dismissed: flag.id, assessment, queue: buildQueue(req.clinicianId!) });
+});
+
+api.post('/orders/:id/complete', requireClinician, async (req, res) => {
+  try {
+    res.json(await completeOrder(param(req, 'id')));
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : 'That order could not be completed.',
+    });
+  }
+});
+
+/* ---------------------------------------------------------- agent activity -- */
+
+api.get('/agent-runs', requireClinician, (req, res) => {
+  const agent = req.query['agent'] as string | undefined;
+  res.json({
+    runs: runs.recent(200, agent as never),
+    spend: summariseSpend(),
+  });
+});
+
+
+/* ------------------------------------------------------------- settings -- */
+
+api.get('/settings', requireClinician, (_req, res) => {
+  res.json({ settings: runtime.current(), apiKeySource: runtime.apiKeySource() });
+});
+
+const ALLOWED_UNITS: Record<keyof UnitPreferences, string[]> = {
+  glucose: ['mg/dL', 'mmol/L'],
+  weight: ['kg', 'lb'],
+  height: ['cm', 'in'],
+  temperature: ['°C', '°F'],
+};
+
+api.put('/settings', requireClinician, (req: AuthedRequest, res) => {
+  const body = req.body as Partial<ClinicSettings> & {
+    apiKey?: string | null;
+    transcriptionKey?: string | null;
+  };
+  const clinician = clinicians.byId(req.clinicianId!);
+  const actorName = clinician?.name ?? 'Unknown clinician';
+  const before = runtime.current();
+  const changed: string[] = [];
+
+  if (body.provider !== undefined) {
+    if (!['auto', 'anthropic', 'deterministic'].includes(body.provider)) {
+      res.status(400).json({ error: 'Choose automatic, live model, or the local engine.' });
+      return;
+    }
+    runtime.settingStore.put(runtime.SETTING_KEYS.provider, body.provider, req.clinicianId!);
+    if (body.provider !== before.provider) changed.push(`engine to ${body.provider}`);
+  }
+
+  if (body.model !== undefined) {
+    const model = String(body.model).trim();
+    if (!model) {
+      res.status(400).json({ error: 'Enter a model identifier, for example claude-opus-5.' });
+      return;
+    }
+    runtime.settingStore.put(runtime.SETTING_KEYS.model, model, req.clinicianId!);
+    if (model !== before.model) changed.push(`model to ${model}`);
+  }
+
+  // The key is written, never read back. An empty string clears it and falls
+  // back to the environment; undefined leaves whatever is stored alone.
+  if (body.apiKey !== undefined) {
+    const key = String(body.apiKey ?? '').trim();
+    if (key === '') {
+      runtime.settingStore.remove(runtime.SETTING_KEYS.apiKey);
+      changed.push('cleared the stored API key');
+    } else {
+      if (key.length < 20) {
+        res.status(400).json({ error: 'That does not look like a complete API key.' });
+        return;
+      }
+      runtime.settingStore.put(runtime.SETTING_KEYS.apiKey, key, req.clinicianId!);
+      // Only the last four characters are ever recorded, here or anywhere else.
+      changed.push(`stored a new API key ending …${key.slice(-4)}`);
+    }
+  }
+
+  if (body.transcription !== undefined) {
+    if (!['browser', 'assemblyai'].includes(body.transcription)) {
+      res.status(400).json({ error: 'Choose browser transcription or AssemblyAI.' });
+      return;
+    }
+    runtime.settingStore.put(runtime.SETTING_KEYS.transcription, body.transcription, req.clinicianId!);
+    if (body.transcription !== before.transcription) changed.push(`transcription to ${body.transcription}`);
+  }
+
+  if (body.transcriptionModel !== undefined) {
+    const model = String(body.transcriptionModel).trim();
+    if (!model) {
+      res.status(400).json({ error: 'Enter a speech model, for example universal-3-5-pro.' });
+      return;
+    }
+    runtime.settingStore.put(runtime.SETTING_KEYS.transcriptionModel, model, req.clinicianId!);
+    if (model !== before.transcriptionModel) changed.push(`speech model to ${model}`);
+  }
+
+  // Same discipline as the model key: written, never read back.
+  if (body.transcriptionKey !== undefined) {
+    const key = String(body.transcriptionKey ?? '').trim();
+    if (key === '') {
+      runtime.settingStore.remove(runtime.SETTING_KEYS.transcriptionKey);
+      changed.push('cleared the stored AssemblyAI key');
+    } else {
+      if (key.length < 20) {
+        res.status(400).json({ error: 'That does not look like a complete AssemblyAI key.' });
+        return;
+      }
+      runtime.settingStore.put(runtime.SETTING_KEYS.transcriptionKey, key, req.clinicianId!);
+      changed.push(`stored an AssemblyAI key ending …${key.slice(-4)}`);
+    }
+  }
+
+  if (body.units !== undefined) {
+    const units: Record<string, string> = {};
+    for (const [field, allowed] of Object.entries(ALLOWED_UNITS)) {
+      const value = (body.units as unknown as Record<string, string>)[field];
+      if (value === undefined) continue;
+      if (!allowed.includes(value)) {
+        res.status(400).json({ error: `${value} is not a unit this system records ${field} in.` });
+        return;
+      }
+      units[field] = value;
+    }
+    runtime.settingStore.put(runtime.SETTING_KEYS.units, { ...before.units, ...units }, req.clinicianId!);
+    changed.push('display units');
+  }
+
+  if (body.keywords !== undefined) {
+    const list = (Array.isArray(body.keywords) ? body.keywords : [])
+      .map((k) => String(k).trim())
+      .filter(Boolean)
+      .slice(0, 500);
+    runtime.settingStore.put(runtime.SETTING_KEYS.keywords, list, req.clinicianId!);
+    changed.push(`${list.length} dictation keyword${list.length === 1 ? '' : 's'}`);
+  }
+
+  if (body.followUpIntervalDays !== undefined) {
+    const days = Number(body.followUpIntervalDays);
+    if (!Number.isInteger(days) || days < 7 || days > 1095) {
+      res.status(400).json({ error: 'Set the review interval between 7 and 1095 days.' });
+      return;
+    }
+    runtime.settingStore.put(runtime.SETTING_KEYS.followUp, days, req.clinicianId!);
+    changed.push(`review interval to ${days} days`);
+  }
+
+  if (body.showAgentStrip !== undefined) {
+    runtime.settingStore.put(runtime.SETTING_KEYS.agentStrip, Boolean(body.showAgentStrip), req.clinicianId!);
+    changed.push(`agent strip ${body.showAgentStrip ? 'shown' : 'hidden'}`);
+  }
+
+  audit.record({
+    actor: req.clinicianId!,
+    actorName,
+    action: 'settings.updated',
+    entityType: 'settings',
+    summary: changed.length > 0 ? `Changed ${changed.join(', ')}.` : 'Saved settings with no changes.',
+    detail: { changed },
+  });
+
+  res.json({ settings: runtime.current(), apiKeySource: runtime.apiKeySource() });
+});
+
+/* -------------------------------------------------------- pronunciation -- */
+
+api.get('/pronunciations', requireClinician, (req: AuthedRequest, res) => {
+  res.json({ pronunciations: pronunciations.forClinician(req.clinicianId!) });
+});
+
+api.post('/pronunciations', requireClinician, (req: AuthedRequest, res) => {
+  const { term, heard, category } = req.body as {
+    term?: string;
+    heard?: string;
+    category?: string;
+  };
+  const cleanTerm = String(term ?? '').trim();
+  if (!cleanTerm) {
+    res.status(400).json({ error: 'Enter the word or phrase as it should be written.' });
+    return;
+  }
+  const record = pronunciations.upsert(
+    req.clinicianId!,
+    cleanTerm.slice(0, 120),
+    String(heard ?? '').slice(0, 200),
+    String(category ?? 'term').slice(0, 40),
+  );
+  const clinician = clinicians.byId(req.clinicianId!);
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: clinician?.name ?? 'Unknown clinician',
+    action: 'pronunciation.recorded',
+    entityType: 'pronunciation',
+    entityId: record.id,
+    summary: `Recorded a voice sample for “${record.term}” (${record.sampleCount} sample${
+      record.sampleCount === 1 ? '' : 's'
+    }).`,
+    detail: { term: record.term, heardAs: record.heardAs },
+  });
+  res.json({ pronunciation: record });
+});
+
+api.delete('/pronunciations/:id', requireClinician, (req: AuthedRequest, res) => {
+  const record = pronunciations.byId(param(req, 'id'));
+  if (!record || record.clinicianId !== req.clinicianId) {
+    res.status(404).json({ error: 'That entry no longer exists.' });
+    return;
+  }
+  pronunciations.remove(record.id);
+  const clinician = clinicians.byId(req.clinicianId!);
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: clinician?.name ?? 'Unknown clinician',
+    action: 'pronunciation.removed',
+    entityType: 'pronunciation',
+    entityId: record.id,
+    summary: `Removed the voice training entry for “${record.term}”.`,
+  });
+  res.json({ ok: true });
+});
+
+/* --------------------------------------------------- clinical thresholds -- */
+
+api.get('/thresholds', requireClinician, (_req, res) => {
+  res.json({ thresholds: describeThresholds() });
+});
+
+/**
+ * Adjust one threshold for this clinic.
+ *
+ * Reason and source are mandatory. The published value stays in the reference
+ * file untouched — this records a departure from it, and the departure carries
+ * the justification a clinician would have to give for it anyway.
+ */
+api.put('/thresholds/:name', requireClinician, (req: AuthedRequest, res) => {
+  const name = param(req, 'name');
+  if (!isThresholdName(name)) {
+    res.status(404).json({ error: 'That is not a threshold this system uses.' });
+    return;
+  }
+
+  const body = req.body as { value?: number; reason?: string; source?: string };
+  const value = Number(body.value);
+  const reason = String(body.reason ?? '').trim();
+  const source = String(body.source ?? '').trim();
+
+  if (reason.length < 10) {
+    res.status(400).json({
+      error: 'Say why this clinic uses a different number. An adjustment with no stated reason cannot be reviewed later.',
+    });
+    return;
+  }
+  if (source.length < 3) {
+    res.status(400).json({
+      error: 'Name the guidance this follows, so the number can be traced the way the published one can.',
+    });
+    return;
+  }
+
+  const problem = thresholds.validate(name, value);
+  if (problem) {
+    res.status(400).json({ error: problem.message });
+    return;
+  }
+
+  const clinician = clinicians.byId(req.clinicianId!);
+  const clinicianName = clinician?.name ?? 'Unknown clinician';
+  const previous = thresholds.overrides()[name];
+  const base = TH[name].baseValue;
+
+  thresholds.put(
+    name,
+    {
+      value,
+      reason: reason.slice(0, 500),
+      source: source.slice(0, 200),
+      setBy: req.clinicianId!,
+      setByName: clinicianName,
+      setAt: new Date().toISOString(),
+    },
+    req.clinicianId!,
+  );
+
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: clinicianName,
+    action: 'threshold.adjusted',
+    entityType: 'clinical_threshold',
+    entityId: name,
+    summary: `Adjusted ${TH[name].label} from ${previous?.value ?? base} to ${value} (published value ${base}, ${TH[name].referenceId}). Reason: ${reason}`,
+    detail: { name, from: previous?.value ?? base, to: value, publishedValue: base, reason, source },
+  });
+
+  res.json({ thresholds: describeThresholds() });
+});
+
+/** Return one threshold to its published value. */
+api.delete('/thresholds/:name', requireClinician, (req: AuthedRequest, res) => {
+  const name = param(req, 'name');
+  if (!isThresholdName(name)) {
+    res.status(404).json({ error: 'That is not a threshold this system uses.' });
+    return;
+  }
+  const previous = thresholds.overrides()[name];
+  if (!previous) {
+    res.json({ thresholds: describeThresholds() });
+    return;
+  }
+
+  thresholds.remove(name, req.clinicianId!);
+  const clinician = clinicians.byId(req.clinicianId!);
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: clinician?.name ?? 'Unknown clinician',
+    action: 'threshold.restored',
+    entityType: 'clinical_threshold',
+    entityId: name,
+    summary: `Restored ${TH[name].label} to the published value of ${TH[name].baseValue} (${TH[name].referenceId}), from ${previous.value}.`,
+    detail: { name, from: previous.value, to: TH[name].baseValue },
+  });
+
+  res.json({ thresholds: describeThresholds() });
+});
+
+/* -------------------------------------------------------- transcription -- */
+
+/**
+ * Mints a short-lived AssemblyAI streaming token for the browser.
+ *
+ * The clinic's API key never leaves this process. The browser cannot set
+ * headers on a WebSocket, so AssemblyAI's own answer to that is a one-time
+ * token passed in the query string — this endpoint is the only thing that
+ * holds the key, and it hands out a credential that expires in a minute and
+ * works for exactly one session.
+ */
+api.get('/transcription/token', requireClinician, async (_req, res) => {
+  const key = runtime.transcriptionKey();
+  if (!key) {
+    res.status(400).json({
+      error: 'No AssemblyAI key is stored. Add one under Settings to use medical transcription.',
+    });
+    return;
+  }
+
+  try {
+    const url = new URL('https://streaming.assemblyai.com/v3/token');
+    // Long enough to survive a slow microphone permission prompt, short enough
+    // that a token captured from the network log is worthless by the time it is.
+    url.searchParams.set('expires_in_seconds', '120');
+    url.searchParams.set('max_session_duration_seconds', '3600');
+
+    const response = await fetch(url, { headers: { Authorization: key } });
+    if (!response.ok) {
+      const detail = await response.text();
+      // The clinician can act on the first of these; the rest are for the log.
+      const message =
+        response.status === 401
+          ? 'AssemblyAI rejected the stored key. Check it under Settings.'
+          : `AssemblyAI could not issue a transcription token (${response.status}).`;
+      console.error('ASSEMBLYAI TOKEN FAILED', response.status, detail.slice(0, 300));
+      res.status(502).json({ error: message });
+      return;
+    }
+
+    const payload = (await response.json()) as { token?: string; expires_in_seconds?: number };
+    if (!payload.token) {
+      res.status(502).json({ error: 'AssemblyAI returned no token. Dictation will use the browser.' });
+      return;
+    }
+
+    res.json({
+      token: payload.token,
+      expiresInSeconds: payload.expires_in_seconds ?? 120,
+      model: runtime.transcriptionModel(),
+    });
+  } catch (error) {
+    console.error('ASSEMBLYAI TOKEN ERROR', error);
+    res.status(502).json({
+      error: 'Could not reach AssemblyAI. Dictation will fall back to the browser.',
+    });
+  }
+});
+
+/* ------------------------------------------------------------ audit log -- */
+
+api.get('/audit', requireClinician, (req, res) => {
+  const action = String(req.query['action'] ?? '').trim() || undefined;
+  const patientId = String(req.query['patientId'] ?? '').trim() || undefined;
+  const limit = Math.min(500, Math.max(10, Number(req.query['limit'] ?? 200) || 200));
+  res.json({
+    events: audit.recent(limit, { action, patientId }),
+    actions: audit.actions(),
+    total: audit.total(),
+  });
+});
+
+/* --------------------------------------------------------------- stream -- */
+
+
+/** Section 6: the dashboard updates when agents complete, with no manual refresh. */
+api.get('/stream', requireClinician, (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(': connected\n\n');
+
+  const unsubscribe = subscribe((event) => {
+    res.write(`data: ${JSON.stringify(event)}\n\n`);
+  });
+
+  // Keeps proxies from closing an idle connection.
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 20_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+  });
+});

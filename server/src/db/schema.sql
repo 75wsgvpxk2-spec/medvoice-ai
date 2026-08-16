@@ -1,0 +1,315 @@
+-- Section 4 data model. Every entity in that section exists here.
+-- SQLite: booleans are INTEGER 0/1, lists are JSON TEXT, timestamps are ISO 8601 TEXT.
+
+PRAGMA foreign_keys = ON;
+
+CREATE TABLE IF NOT EXISTS clinician (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  credentials   TEXT NOT NULL,
+  email         TEXT NOT NULL UNIQUE,
+  -- scrypt hash, never the password itself
+  password_hash TEXT NOT NULL,
+  password_salt TEXT NOT NULL
+);
+
+/*
+ * The clinic this installation belongs to. A single row, so the id is fixed —
+ * a settings table rather than an entity, and the record every printed or
+ * exported document is headed with.
+ */
+CREATE TABLE IF NOT EXISTS clinic (
+  id            TEXT PRIMARY KEY DEFAULT 'clinic',
+  name          TEXT NOT NULL DEFAULT '',
+  legal_name    TEXT NOT NULL DEFAULT '',
+  registration  TEXT NOT NULL DEFAULT '',
+  address       TEXT NOT NULL DEFAULT '',
+  phone         TEXT NOT NULL DEFAULT '',
+  email         TEXT NOT NULL DEFAULT '',
+  website       TEXT NOT NULL DEFAULT '',
+  -- Data URI. Kept in the database so a clinic install needs no file storage.
+  logo          TEXT,
+  updated_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS patient (
+  id               TEXT PRIMARY KEY,
+  name             TEXT NOT NULL,
+  age              INTEGER NOT NULL,
+  sex              TEXT NOT NULL CHECK (sex IN ('female','male')),
+  conditions       TEXT NOT NULL DEFAULT '[]',   -- JSON: [{name, diagnosedOn}]
+  medications      TEXT NOT NULL DEFAULT '[]',   -- JSON: [{name, dose, frequency, startedOn}]
+  allergies        TEXT NOT NULL DEFAULT '[]',   -- JSON: string[]
+  clinician_id     TEXT NOT NULL REFERENCES clinician(id),
+  -- Section 4: managed and stable are clinically different and never collapsed.
+  status           TEXT NOT NULL DEFAULT 'stable'
+                     CHECK (status IN ('critical','watch','stable','managed')),
+  queue_position   INTEGER,
+  last_assessed_at TEXT,
+  -- Administrative detail: contact, next of kin, cover. JSON because none of it
+  -- is ever queried field by field, matching how conditions are already stored.
+  profile          TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_patient_clinician ON patient(clinician_id);
+
+CREATE TABLE IF NOT EXISTS encounter (
+  id                  TEXT PRIMARY KEY,
+  patient_id          TEXT NOT NULL REFERENCES patient(id),
+  clinician_id        TEXT NOT NULL REFERENCES clinician(id),
+  date                TEXT NOT NULL,
+  -- Agent 1 rule: never modified. A1-4 verifies this byte for byte.
+  raw_note            TEXT NOT NULL,
+  subjective          TEXT NOT NULL DEFAULT '',
+  objective           TEXT NOT NULL DEFAULT '',
+  assessment          TEXT NOT NULL DEFAULT '',
+  plan                TEXT NOT NULL DEFAULT '',
+  field_confidence    TEXT NOT NULL DEFAULT '[]',  -- JSON: FieldConfidence[]
+  -- DI-1: an encounter only reaches 'approved' through the approval action.
+  status              TEXT NOT NULL DEFAULT 'draft'
+                        CHECK (status IN ('draft','awaiting_approval','approved')),
+  approved_by         TEXT REFERENCES clinician(id),
+  approved_at         TEXT,
+  version             INTEGER NOT NULL DEFAULT 1,
+  amends_encounter_id TEXT REFERENCES encounter(id),
+  amended_by          TEXT REFERENCES clinician(id),
+  amended_at          TEXT,
+  context_brief       TEXT,                        -- JSON: ContextBrief
+  created_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_encounter_patient ON encounter(patient_id, date DESC);
+CREATE INDEX IF NOT EXISTS idx_encounter_status ON encounter(status);
+
+CREATE TABLE IF NOT EXISTS observation (
+  id           TEXT PRIMARY KEY,
+  patient_id   TEXT NOT NULL REFERENCES patient(id),
+  encounter_id TEXT REFERENCES encounter(id),
+  type         TEXT NOT NULL,
+  value        TEXT NOT NULL,
+  unit         TEXT NOT NULL,
+  recorded_on  TEXT NOT NULL,
+  -- Derived from the monitoring intervals in docs/clinical-reference.md.
+  overdue      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_observation_patient ON observation(patient_id, recorded_on DESC);
+
+CREATE TABLE IF NOT EXISTS risk_flag (
+  id                       TEXT PRIMARY KEY,
+  patient_id               TEXT NOT NULL REFERENCES patient(id),
+  flag_type                TEXT NOT NULL,
+  urgency                  TEXT NOT NULL CHECK (urgency IN ('critical','watch','stable')),
+  -- Section 5: a flag with no reasoning is a bug. Enforced at the schema level.
+  reasoning                TEXT NOT NULL CHECK (length(trim(reasoning)) > 0),
+  recommended_action       TEXT NOT NULL,
+  triggering_encounter_id  TEXT REFERENCES encounter(id),
+  triggering_observation_id TEXT REFERENCES observation(id),
+  created_at               TEXT NOT NULL,
+  status                   TEXT NOT NULL DEFAULT 'active'
+                             CHECK (status IN ('active','resolved','dismissed')),
+  dismissal_reason         TEXT CHECK (dismissal_reason IS NULL OR dismissal_reason IN
+                             ('not_clinically_relevant','already_addressed','disagree_with_assessment')),
+  dismissed_by             TEXT REFERENCES clinician(id),
+  dismissed_at             TEXT,
+  confidence               TEXT NOT NULL DEFAULT 'high' CHECK (confidence IN ('high','uncertain')),
+  -- CS-1: every threshold traceable to docs/clinical-reference.md.
+  reference_ids            TEXT NOT NULL DEFAULT '[]',
+  -- FD-4: dismissal is keyed to the clinical picture at the time it was dismissed.
+  dismissed_fingerprint    TEXT,
+  /*
+   * The rules layer's severity for this finding, kept so the queue can be
+   * re-ranked from stored flags after a single-patient assessment without
+   * re-running the agents across the whole population.
+   */
+  severity_score           INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_flag_patient ON risk_flag(patient_id, status);
+
+CREATE TABLE IF NOT EXISTS documentation_alert (
+  id           TEXT PRIMARY KEY,
+  patient_id   TEXT NOT NULL REFERENCES patient(id),
+  encounter_id TEXT NOT NULL REFERENCES encounter(id),
+  gap_type     TEXT NOT NULL CHECK (gap_type IN
+                 ('missing_diagnosis','missing_result','incomplete_note','missing_billing_code')),
+  description  TEXT NOT NULL,
+  resolution   TEXT NOT NULL,                 -- JSON: ResolutionAction
+  status       TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
+  resolved_by  TEXT REFERENCES clinician(id),
+  resolved_at  TEXT,
+  created_at   TEXT NOT NULL,
+  -- A4-4: the same gap is never raised twice for one patient.
+  gap_key      TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_gap_unique ON documentation_alert(patient_id, gap_key);
+CREATE INDEX IF NOT EXISTS idx_alert_patient ON documentation_alert(patient_id, status);
+
+CREATE TABLE IF NOT EXISTS "order" (
+  id            TEXT PRIMARY KEY,
+  patient_id    TEXT NOT NULL REFERENCES patient(id),
+  encounter_id  TEXT NOT NULL REFERENCES encounter(id),
+  order_type    TEXT NOT NULL,
+  what          TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'requested' CHECK (status IN ('requested','completed')),
+  ordered_by    TEXT NOT NULL REFERENCES clinician(id),
+  ordered_at    TEXT NOT NULL,
+  completed_at  TEXT,
+  from_alert_id TEXT REFERENCES documentation_alert(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_patient ON "order"(patient_id);
+
+CREATE TABLE IF NOT EXISTS billing_entry (
+  id            TEXT PRIMARY KEY,
+  patient_id    TEXT NOT NULL REFERENCES patient(id),
+  encounter_id  TEXT NOT NULL REFERENCES encounter(id),
+  code          TEXT NOT NULL,
+  description   TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','recorded')),
+  -- OB-2: the billing entry created by a one-tap resolution links to its order.
+  from_order_id TEXT REFERENCES "order"(id),
+  created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_patient ON billing_entry(patient_id);
+
+-- Section 4: the run log is the evidence that the agents are real and that two
+-- of them run in parallel. OR-1 is verified against these timestamps.
+CREATE TABLE IF NOT EXISTS agent_run (
+  id             TEXT PRIMARY KEY,
+  agent          TEXT NOT NULL,
+  trigger        TEXT NOT NULL,
+  patient_id     TEXT,
+  encounter_id   TEXT,
+  correlation_id TEXT NOT NULL,
+  started_at     TEXT NOT NULL,
+  completed_at   TEXT,
+  duration_ms    INTEGER,
+  input_summary  TEXT NOT NULL,
+  output_summary TEXT,
+  outcome        TEXT NOT NULL DEFAULT 'running'
+                   CHECK (outcome IN ('running','success','failure')),
+  error_message  TEXT,
+  /*
+   * OR-1 [CRITICAL] asks for proof that Agents 3 and 4 overlap, verified in the
+   * run log rather than by watching the screen. Wall-clock timestamps cannot
+   * show this when a run finishes inside a millisecond, so each run records how
+   * many runs were in flight at the moment it started. A value of 2 or more is
+   * direct evidence that another agent was still running when this one began;
+   * sequential execution can only ever record 1.
+   */
+  concurrency_at_start INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_correlation ON agent_run(correlation_id);
+CREATE INDEX IF NOT EXISTS idx_run_started ON agent_run(started_at DESC);
+
+-- Section 11: token spend instrumentation, in place from Phase 0.
+CREATE TABLE IF NOT EXISTS model_call (
+  id                 TEXT PRIMARY KEY,
+  agent              TEXT NOT NULL,
+  provider           TEXT NOT NULL,
+  model              TEXT NOT NULL,
+  input_tokens       INTEGER NOT NULL DEFAULT 0,
+  output_tokens      INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd           REAL NOT NULL DEFAULT 0,
+  duration_ms        INTEGER NOT NULL DEFAULT 0,
+  cached             INTEGER NOT NULL DEFAULT 0,
+  phase              TEXT,
+  created_at         TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_call_created ON model_call(created_at DESC);
+
+-- Section 11 / PF-6: cached agent output for the seeded population.
+CREATE TABLE IF NOT EXISTS agent_cache (
+  cache_key  TEXT PRIMARY KEY,
+  agent      TEXT NOT NULL,
+  payload    TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- Population run history, so the queue can report when it was last checked
+-- (8.2 "empty, nothing flagged" states when it was last checked; PR-2, PR-4).
+CREATE TABLE IF NOT EXISTS population_run (
+  id            TEXT PRIMARY KEY,
+  clinician_id  TEXT NOT NULL REFERENCES clinician(id),
+  started_at    TEXT NOT NULL,
+  completed_at  TEXT,
+  outcome       TEXT NOT NULL DEFAULT 'running'
+                  CHECK (outcome IN ('running','success','partial','failure')),
+  patients_assessed INTEGER NOT NULL DEFAULT 0,
+  detail        TEXT
+);
+
+/* ---------------------------------------------------------------------------
+ * Settings, audit and voice training.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Runtime configuration the clinic can change without an environment variable
+ * or a restart. Values are JSON so a setting can grow from a string to an
+ * object without a migration. Environment variables remain the fallback: a key
+ * absent here means "use what config.ts read at boot".
+ */
+CREATE TABLE IF NOT EXISTS setting (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  updated_by TEXT
+);
+
+/*
+ * Every change anyone makes to the record, in one append-only place.
+ *
+ * Deliberately never updated or deleted — an audit row that can be edited is
+ * not an audit row. The summary is written in plain language at the point of
+ * the change, because reconstructing intent from a diff months later is
+ * exactly what this table exists to avoid.
+ */
+CREATE TABLE IF NOT EXISTS audit_event (
+  id          TEXT PRIMARY KEY,
+  at          TEXT NOT NULL,
+  /* The clinician id, or 'system' when an agent or the seeder acted. */
+  actor       TEXT NOT NULL,
+  actor_name  TEXT NOT NULL,
+  /* noun.verb, e.g. patient.created — stable enough to filter on. */
+  action      TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id   TEXT,
+  patient_id  TEXT,
+  summary     TEXT NOT NULL,
+  detail      TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_event(at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_patient ON audit_event(patient_id, at DESC);
+
+/*
+ * Voice-trained transcription corrections.
+ *
+ * This is a correction dictionary, not model training: browser speech
+ * recognition cannot be fine-tuned from here. The clinician says a term, the
+ * recogniser returns whatever it heard, and the mishearing is stored against
+ * the correct spelling so later transcripts can be repaired. Honest about what
+ * it is — a lookup that gets better the more samples it has.
+ */
+CREATE TABLE IF NOT EXISTS pronunciation (
+  id           TEXT PRIMARY KEY,
+  clinician_id TEXT NOT NULL REFERENCES clinician(id),
+  /* The correct spelling, as it should appear in the note. */
+  term         TEXT NOT NULL,
+  /* Comma-free JSON array of the mishearings recorded for this term. */
+  heard_as     TEXT NOT NULL DEFAULT '[]',
+  category     TEXT NOT NULL DEFAULT 'term',
+  sample_count INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pronunciation_term
+  ON pronunciation(clinician_id, term);
