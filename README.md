@@ -94,6 +94,17 @@ docker compose up
 The database is a volume, so it survives rebuilds. See
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for HTTPS, backups and upgrades.
 
+<!-- Screenshots go here. Drop PNGs into docs/images/ and uncomment:
+
+| | |
+|---|---|
+| ![Priority queue](docs/images/queue.png) | ![Patient record](docs/images/patient.png) |
+| The caseload, ranked, with the reason on every row | Last encounter in SOAP, record collapsed above it |
+| ![AI usage](docs/images/ai-usage.png) | ![Audit trail](docs/images/audit.png) |
+| What the model did, and what it cost | Every change, hash-chained |
+
+-->
+
 ---
 
 ## How it works
@@ -193,8 +204,11 @@ are small.
 5. **Agent output is not verified against the record.** The model can assert
    something about a patient's history that is not in it. Treat any agent
    statement as a prompt to look, not as a finding.
-6. **There is one clinician account**, with no roles and no password reset flow.
-   Fine for a single-clinician pilot, inadequate for a practice.
+6. **Read the safeguards table in [SECURITY.md](SECURITY.md).** It states, line
+   by line, which HIPAA technical safeguards this build implements and which it
+   does not — including no MFA, no encryption at rest, and no emergency access
+   procedure. Nothing here claims compliance, because compliance is
+   organisational and belongs to your practice.
 
 ---
 

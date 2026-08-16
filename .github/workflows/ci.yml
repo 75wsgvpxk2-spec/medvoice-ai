@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # better-sqlite3 is a native module; npm ci builds it here.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      # No ANTHROPIC_API_KEY is set, deliberately. The suite runs on the
+      # deterministic engine, which is what lets a contributor verify a change
+      # without an account — and what lets this job run at all.
+      - name: Test
+        run: npm test
+
+      - name: Dependency audit
+        run: npm audit --omit=dev --audit-level=moderate
+
+  # A stricter pass that needs credentials, so it only runs where they exist.
+  # Never on a pull request from a fork: a secret must not be reachable by
+  # anyone who can open a PR.
+  live-model:
+    if: github.event_name == 'push' && github.repository_owner != ''
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Test against the real model
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        # Skipped rather than failed when no key is configured, so a fork of
+        # this repository is not permanently red through no fault of its own.
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "No ANTHROPIC_API_KEY configured — skipping the live model suite."
+            exit 0
+          fi
+          npm run test:live
