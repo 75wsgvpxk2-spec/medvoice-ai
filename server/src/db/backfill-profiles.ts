@@ -71,7 +71,9 @@ function run(): void {
     }
     const profile = byName.get(row.name);
     if (!profile) {
-      console.log(`  no profile authored for ${row.name} — left blank`);
+      // The id, not the name: a development script's output ends up in
+      // terminal scrollback, CI logs and screenshots.
+      console.log(`  no profile authored for ${row.id} — left blank`);
       missing += 1;
       continue;
     }

@@ -39,14 +39,30 @@ function sign(value: string): string {
 /** Absolute session lifetime. A clinical shift, not a browsing session. */
 export const DEFAULT_SESSION_HOURS = 12;
 
+/**
+ * Automatic logoff — HIPAA §164.312(a)(2)(iii).
+ *
+ * Fifteen minutes is the figure the safeguard exists for: a consulting room
+ * screen left unlocked between patients. It is separate from the absolute
+ * lifetime because they answer different questions — how long a shift lasts,
+ * and how long an unattended screen stays open.
+ */
+export const DEFAULT_IDLE_MINUTES = 15;
+
 export interface SessionClaims {
   clinicianId: string;
   issuedAt: number;
   tokenVersion: number;
+  /** Refreshed as the clinician works, so idleness is measurable. */
+  lastSeenAt: number;
 }
 
-export function makeSessionToken(clinicianId: string, tokenVersion: number): string {
-  const payload = `${clinicianId}.${Date.now()}.${tokenVersion}`;
+export function makeSessionToken(
+  clinicianId: string,
+  tokenVersion: number,
+  issuedAt = Date.now(),
+): string {
+  const payload = `${clinicianId}.${issuedAt}.${tokenVersion}.${Date.now()}`;
   return `${payload}.${sign(payload)}`;
 }
 
@@ -71,19 +87,30 @@ export function readSessionToken(token: string | undefined): SessionClaims | nul
   if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
 
   const parts = payload.split('.');
-  if (parts.length !== 3) return null;
+  if (parts.length !== 4) return null;
 
-  const [clinicianId, issuedAt, tokenVersion] = parts;
+  const [clinicianId, issuedAt, tokenVersion, lastSeenAt] = parts;
   if (!clinicianId) return null;
 
   const issued = Number(issuedAt);
   const version = Number(tokenVersion);
-  if (!Number.isFinite(issued) || !Number.isInteger(version)) return null;
+  const seen = Number(lastSeenAt);
+  if (!Number.isFinite(issued) || !Number.isInteger(version) || !Number.isFinite(seen)) return null;
 
-  return { clinicianId, issuedAt: issued, tokenVersion: version };
+  return { clinicianId, issuedAt: issued, tokenVersion: version, lastSeenAt: seen };
 }
 
 /** True when the token is past its absolute lifetime. */
 export function isExpired(claims: SessionClaims, hours = DEFAULT_SESSION_HOURS): boolean {
   return Date.now() - claims.issuedAt > hours * 3_600_000;
+}
+
+/** True when nothing has been done with this session for too long. */
+export function isIdle(claims: SessionClaims, minutes = DEFAULT_IDLE_MINUTES): boolean {
+  return Date.now() - claims.lastSeenAt > minutes * 60_000;
+}
+
+/** A fresh token for the same session, with the idle clock restarted. */
+export function refreshSessionToken(claims: SessionClaims): string {
+  return makeSessionToken(claims.clinicianId, claims.tokenVersion, claims.issuedAt);
 }

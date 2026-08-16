@@ -69,6 +69,29 @@ export function Audit({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
 
       {error && <ErrorState message={error} />}
 
+      {/* §164.312(c)(1). The chain cannot stop somebody with the database file
+          from rewriting history, but it makes the attempt visible. */}
+      <div className={view.integrity.ok ? 'integrity-ok' : 'error stack'}>
+        {view.integrity.ok ? (
+          <>
+            <strong>Chain intact.</strong> {view.integrity.checked.toLocaleString()} entries verify
+            against the entry before them.
+          </>
+        ) : (
+          <>
+            <div>
+              <strong>This trail has been altered.</strong> The chain breaks at an entry recorded{' '}
+              {view.integrity.brokenAt ? new Date(view.integrity.brokenAt).toLocaleString() : 'at an unknown time'}
+              {view.integrity.brokenSummary ? ` — “${view.integrity.brokenSummary}”` : ''}.
+            </div>
+            <div>
+              {view.integrity.checked.toLocaleString()} entries before it verify. Everything from that
+              point on should be treated as unreliable, and this needs investigating.
+            </div>
+          </>
+        )}
+      </div>
+
       <div className="toolbar">
         <select value={action} onChange={(e) => setAction(e.target.value)} aria-label="Filter by change type">
           <option value="">Every change</option>

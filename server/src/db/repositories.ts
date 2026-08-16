@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { db, id, now, toJson, fromJson, toBool } from './index.ts';
 import type {
   Patient,
@@ -1008,15 +1009,46 @@ export const audit = {
     detail?: Record<string, unknown>;
   }): void {
     try {
-      db()
+      const conn = db();
+      const rowId = id('aud');
+      const at = now();
+      const detail = toJson(event.detail ?? {});
+
+      const previous = conn
+        .prepare('SELECT hash FROM audit_event ORDER BY rowid DESC LIMIT 1')
+        .get() as Row | undefined;
+      const prevHash = (previous?.['hash'] as string | null) ?? '';
+
+      // Everything that matters is hashed. A field left out of this is a field
+      // that can be edited without breaking the chain.
+      const hash = createHash('sha256')
+        .update(
+          [
+            prevHash,
+            rowId,
+            at,
+            event.actor,
+            event.actorName,
+            event.action,
+            event.entityType,
+            event.entityId ?? '',
+            event.patientId ?? '',
+            event.summary,
+            detail,
+          ].join('\u0000'),
+        )
+        .digest('hex');
+
+      conn
         .prepare(
           `INSERT INTO audit_event
-             (id, at, actor, actor_name, action, entity_type, entity_id, patient_id, summary, detail)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+             (id, at, actor, actor_name, action, entity_type, entity_id, patient_id, summary,
+              detail, prev_hash, hash)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
-          id('aud'),
-          now(),
+          rowId,
+          at,
           event.actor,
           event.actorName,
           event.action,
@@ -1024,11 +1056,71 @@ export const audit = {
           event.entityId ?? null,
           event.patientId ?? null,
           event.summary,
-          toJson(event.detail ?? {}),
+          detail,
+          prevHash,
+          hash,
         );
     } catch (error) {
       console.error('AUDIT WRITE FAILED', event.action, error);
     }
+  },
+
+  /**
+   * Walks the chain and reports the first row whose hash does not follow.
+   *
+   * Rows written before hashing existed have no hash and are skipped rather
+   * than reported — an upgrade is not tampering, and crying wolf about it would
+   * teach people to ignore the check.
+   */
+  verify(): { ok: boolean; checked: number; brokenAt: string | null; brokenSummary: string | null } {
+    const rows = db()
+      .prepare('SELECT * FROM audit_event ORDER BY rowid ASC')
+      .all() as Row[];
+
+    let previousHash = '';
+    let checked = 0;
+
+    for (const r of rows) {
+      const stored = r['hash'] as string | null;
+      if (!stored) {
+        // Pre-hash row: adopt whatever it recorded so later rows still verify.
+        previousHash = '';
+        continue;
+      }
+
+      const expected = createHash('sha256')
+        .update(
+          [
+            (r['prev_hash'] as string | null) ?? '',
+            r['id'],
+            r['at'],
+            r['actor'],
+            r['actor_name'],
+            r['action'],
+            r['entity_type'],
+            (r['entity_id'] as string | null) ?? '',
+            (r['patient_id'] as string | null) ?? '',
+            r['summary'],
+            r['detail'],
+          ].join('\u0000'),
+        )
+        .digest('hex');
+
+      const linkOk = ((r['prev_hash'] as string | null) ?? '') === previousHash || previousHash === '';
+      if (expected !== stored || !linkOk) {
+        return {
+          ok: false,
+          checked,
+          brokenAt: r['at'] as string,
+          brokenSummary: r['summary'] as string,
+        };
+      }
+
+      previousHash = stored;
+      checked += 1;
+    }
+
+    return { ok: true, checked, brokenAt: null, brokenSummary: null };
   },
 
   recent(limit = 200, filter: { action?: string; patientId?: string } = {}): AuditEvent[] {

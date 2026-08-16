@@ -847,6 +847,7 @@ function ClinicSection({
 }) {
   const [days, setDays] = useState(String(settings.followUpIntervalDays));
   const [hours, setHours] = useState(String(settings.sessionHours));
+  const [idle, setIdle] = useState(String(settings.idleMinutes));
 
   return (
     <section className="card stack">
@@ -901,6 +902,32 @@ function ClinicSection({
           <p className="hint">
             How long a sign-in lasts before it must be repeated. Signing out ends every session
             immediately, including any opened on another machine.
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="set-idle">Sign out after inactivity, in minutes</label>
+          <div className="row">
+            <input
+              id="set-idle"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={480}
+              value={idle}
+              onChange={(e) => setIdle(e.target.value)}
+            />
+            <button
+              className="quiet"
+              disabled={saving || Number(idle) === settings.idleMinutes}
+              onClick={() => onSave({ idleMinutes: Number(idle) }, 'the inactivity timeout')}
+            >
+              Save
+            </button>
+          </div>
+          <p className="hint">
+            For a screen left unattended in a consulting room. Shorter than the session length above,
+            which is how long a shift lasts.
           </p>
         </div>
 

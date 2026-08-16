@@ -596,6 +596,8 @@ export interface ClinicSettings {
   followUpIntervalDays: number;
   /** How long a sign-in lasts before it must be repeated. */
   sessionHours: number;
+  /** Automatic logoff after inactivity — §164.312(a)(2)(iii). */
+  idleMinutes: number;
   /** Show the agent strip along the foot of every screen. */
   showAgentStrip: boolean;
   /** Require a reason before a flag can be dismissed. Off is not offered. */
@@ -616,6 +618,7 @@ export const DEFAULT_SETTINGS: Omit<
   keywords: [],
   followUpIntervalDays: 365,
   sessionHours: 12,
+  idleMinutes: 15,
   showAgentStrip: true,
   requireDismissalReason: true,
 };

@@ -306,7 +306,18 @@ CREATE TABLE IF NOT EXISTS audit_event (
   entity_id   TEXT,
   patient_id  TEXT,
   summary     TEXT NOT NULL,
-  detail      TEXT NOT NULL DEFAULT '{}'
+  detail      TEXT NOT NULL DEFAULT '{}',
+  /*
+   * §164.312(c)(1) — integrity. Each row hashes its own contents together with
+   * the previous row's hash, so altering or removing history breaks the chain
+   * from that point on and the break is visible.
+   *
+   * This does not prevent tampering: anyone with the database file can rewrite
+   * every hash. It makes tampering detectable, which is what an audit trail
+   * can honestly offer without a second system to attest to.
+   */
+  prev_hash   TEXT,
+  hash        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_at ON audit_event(at DESC);

@@ -2143,3 +2143,12 @@ tbody tr:hover { background: var(--brand-wash); }
 .row-inactive .pill {
   opacity: 1;
 }
+
+.integrity-ok {
+  padding: var(--gap-2) var(--gap-3);
+  border-radius: var(--radius-md);
+  background: var(--managed-ground);
+  border: 1px solid var(--managed-line);
+  color: var(--managed-ink);
+  font-size: var(--text-sm);
+}

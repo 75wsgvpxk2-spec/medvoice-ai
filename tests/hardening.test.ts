@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { submitEncounter, approveEncounter, runPopulation } from '../server/src/orchestration/triggers.ts';
 import { resolveAlert } from '../server/src/agents/resolution.ts';
-import { patients, alerts, runs, flags, clinicians } from '../server/src/db/repositories.ts';
+import { patients, alerts, runs, flags, clinicians, audit } from '../server/src/db/repositories.ts';
 import { summariseSpend } from '../server/src/model/spend.ts';
 import { db } from '../server/src/db/index.ts';
 import {
@@ -274,5 +274,61 @@ describe('Multi-user access — §164.312(a)(2)(i) unique user identification', 
   it('never leaves an installation with no administrator', () => {
     // The seeded clinician is the admin; the nurse is not.
     expect(clinicians.activeAdminCount()).toBe(1);
+  });
+});
+
+describe('Audit integrity — §164.312(c)(1)', () => {
+  beforeAll(() => {
+    freshPopulation();
+  });
+
+  it('chains each entry to the one before it', () => {
+    audit.record({
+      actor: CLINICIAN_ID,
+      actorName: 'Andrea Thomas',
+      action: 'test.first',
+      entityType: 'test',
+      summary: 'First entry.',
+    });
+    audit.record({
+      actor: CLINICIAN_ID,
+      actorName: 'Andrea Thomas',
+      action: 'test.second',
+      entityType: 'test',
+      summary: 'Second entry.',
+    });
+
+    const result = audit.verify();
+    expect(result.ok).toBe(true);
+    expect(result.checked).toBeGreaterThanOrEqual(2);
+    expect(result.brokenAt).toBeNull();
+  });
+
+  it('detects an entry edited in place', () => {
+    // Exactly what somebody with file access to the database would do.
+    db().prepare("UPDATE audit_event SET summary = 'Nothing happened' WHERE action = 'test.first'").run();
+
+    const result = audit.verify();
+    expect(result.ok).toBe(false);
+    expect(result.brokenSummary).toBe('Nothing happened');
+  });
+
+  it('detects a deleted entry', () => {
+    freshPopulation();
+    for (const n of ['a', 'b', 'c']) {
+      audit.record({
+        actor: CLINICIAN_ID,
+        actorName: 'Andrea Thomas',
+        action: `test.${n}`,
+        entityType: 'test',
+        summary: `Entry ${n}.`,
+      });
+    }
+    expect(audit.verify().ok).toBe(true);
+
+    // Removing the middle row leaves the next one pointing at a hash that is
+    // no longer its predecessor.
+    db().prepare("DELETE FROM audit_event WHERE action = 'test.b'").run();
+    expect(audit.verify().ok).toBe(false);
   });
 });

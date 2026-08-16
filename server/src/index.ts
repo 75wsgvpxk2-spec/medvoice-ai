@@ -1,4 +1,5 @@
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import helmet from 'helmet';
 import path from 'node:path';
 import fs from 'node:fs';
 import { config, ROOT } from './lib/config.ts';
@@ -10,6 +11,44 @@ import { verifyReference } from './clinical/reference.ts';
 import { clinicians } from './db/repositories.ts';
 
 const app = express();
+
+/*
+ * Security headers.
+ *
+ * The CSP suits what this application actually is: a same-origin SPA with no
+ * third-party scripts. `connect-src` has to allow the AssemblyAI socket, since
+ * dictation streams from the browser directly rather than through this server —
+ * that is deliberate (the audio never touches the clinic's own machine) and it
+ * means the CSP has to say so out loud.
+ */
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        // Vite injects styles at runtime; the alternative is a nonce pipeline
+        // that buys little for an application serving no third-party content.
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        // Logos are stored as data URIs in the database.
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'", 'https://streaming.assemblyai.com', 'wss://streaming.assemblyai.com'],
+        // No embedding: a clinical record in somebody else's iframe is a
+        // clickjacking target.
+        frameAncestors: ["'none'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+      },
+    },
+    // Sent only over HTTPS, which is where it means anything.
+    hsts: config.isProd,
+    // The browser's own referrer default leaks patient ids in URLs to any
+    // outbound link.
+    referrerPolicy: { policy: 'no-referrer' },
+    crossOriginEmbedderPolicy: false,
+  }),
+);
 
 // Express 5 removed res.cookie helpers from the base response in some setups;
 // these are the only two cookie operations the API performs.
@@ -45,6 +84,23 @@ if (config.isProd && fs.existsSync(clientDist)) {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }
+
+/**
+ * The last middleware: anything that threw and was not handled ends here.
+ *
+ * Express's default handler puts the stack trace in the response body whenever
+ * NODE_ENV is not exactly "production" — which is easy to get wrong on a
+ * self-hosted install, and hands an attacker the file layout of a system
+ * holding patient records. The detail goes to the log; the client gets a
+ * sentence.
+ */
+app.use((error: Error, req: Request, res: Response, _next: NextFunction) => {
+  console.error(`UNHANDLED ${req.method} ${req.path}`, error);
+  if (res.headersSent) return;
+  res.status(500).json({
+    error: 'Something went wrong handling that request. Nothing was changed. Try again.',
+  });
+});
 
 /* --------------------------------------------------------------- startup -- */
 

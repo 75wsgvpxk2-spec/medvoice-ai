@@ -1,7 +1,16 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
 import { randomBytes } from 'node:crypto';
 import { config } from '../lib/config.ts';
-import { hashPassword, isExpired, makeSessionToken, readSessionToken, verifyPassword } from '../lib/auth.ts';
+import {
+  hashPassword,
+  isExpired,
+  isIdle,
+  makeSessionToken,
+  readSessionToken,
+  refreshSessionToken,
+  verifyPassword,
+} from '../lib/auth.ts';
 import {
   clinicians,
   clinic,
@@ -49,6 +58,41 @@ import { BLOOD_TYPES, DEFAULT_BRAND } from '../../../shared/types.ts';
 
 export const api = express.Router();
 api.use(express.json({ limit: '4mb' }));  // headroom for a base64 clinic logo
+
+/**
+ * Rate limits.
+ *
+ * Two tiers, because the risk is not the same. Guessing a password is worth an
+ * attacker's time and gets a strict budget; reading the queue is what a busy
+ * clinic does all morning and must not be throttled into uselessness.
+ *
+ * Counted per IP, which on a clinic LAN behind one router means the whole
+ * practice shares a budget — hence a limit generous enough for a real morning
+ * rather than a textbook one.
+ */
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  // Successful sign-ins do not count: a clinic that all arrive at 08:00 should
+  // not lock itself out.
+  skipSuccessfulRequests: true,
+  message: {
+    error: 'Too many sign-in attempts. Wait fifteen minutes, or ask your administrator to reset the password.',
+  },
+});
+
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 600,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Slow down and try again shortly.' },
+});
+
+api.use(generalLimiter);
+api.use(['/auth/login', '/auth/signup', '/auth/password'], authLimiter);
 // Mounted before every route, so no change can be added later that escapes it.
 api.use(auditTrail);
 
@@ -94,6 +138,16 @@ function requireClinician(req: AuthedRequest, res: Response, next: NextFunction)
     return;
   }
 
+  // §164.312(a)(2)(iii) — automatic logoff. Distinguished from the absolute
+  // expiry above so the message can say which happened; a clinician who
+  // stepped out for twenty minutes should not be told their shift ended.
+  if (isIdle(claims, runtime.idleMinutes())) {
+    res.status(401).json({
+      error: 'You were signed out after a period of inactivity. Sign in again to continue.',
+    });
+    return;
+  }
+
   // Deactivating a user bumps their token version, so this is belt and braces
   // — but an access check that depends on one mechanism is one bug from being
   // no access check at all.
@@ -104,6 +158,22 @@ function requireClinician(req: AuthedRequest, res: Response, next: NextFunction)
   }
 
   req.clinicianId = claims.clinicianId;
+
+  /*
+   * Restart the idle clock on activity, but not on every request: the queue
+   * polls and the event stream reconnects, and refreshing the cookie on those
+   * would mean an unattended screen never goes idle at all. Rewriting it at
+   * most once a minute keeps the cost down too.
+   */
+  if (Date.now() - claims.lastSeenAt > 60_000) {
+    res.cookie?.(config.sessionCookieName, refreshSessionToken(claims), {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: config.isProd,
+      maxAge: runtime.sessionHours() * 60 * 60 * 1000,
+    });
+  }
+
   next();
 }
 
@@ -1266,6 +1336,16 @@ api.put('/settings', requireClinician, (req: AuthedRequest, res) => {
     changed.push(`review interval to ${days} days`);
   }
 
+  if (body.idleMinutes !== undefined) {
+    const minutes = Number(body.idleMinutes);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 480) {
+      res.status(400).json({ error: 'Set the inactivity timeout between 1 and 480 minutes.' });
+      return;
+    }
+    runtime.settingStore.put(runtime.SETTING_KEYS.idleMinutes, minutes, req.clinicianId!);
+    if (minutes !== before.idleMinutes) changed.push(`inactivity timeout to ${minutes} minutes`);
+  }
+
   if (body.sessionHours !== undefined) {
     const hours = Number(body.sessionHours);
     if (!Number.isInteger(hours) || hours < 1 || hours > 720) {
@@ -1709,6 +1789,7 @@ api.get('/audit', requireClinician, (req, res) => {
     events: audit.recent(limit, { action, patientId }),
     actions: audit.actions(),
     total: audit.total(),
+    integrity: audit.verify(),
   });
 });
 

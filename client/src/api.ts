@@ -196,6 +196,7 @@ export interface AuditView {
   events: AuditEvent[];
   actions: string[];
   total: number;
+  integrity: { ok: boolean; checked: number; brokenAt: string | null; brokenSummary: string | null };
 }
 
 export interface PatientQuery {

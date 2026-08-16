@@ -1,6 +1,6 @@
 import { settings as store } from '../db/repositories.ts';
 import { config } from './config.ts';
-import { DEFAULT_SESSION_HOURS } from './auth.ts';
+import { DEFAULT_IDLE_MINUTES, DEFAULT_SESSION_HOURS } from './auth.ts';
 import {
   DEFAULT_SETTINGS,
   type ClinicSettings,
@@ -32,6 +32,7 @@ const KEYS = {
   followUp: 'clinic.followUpIntervalDays',
   agentStrip: 'ui.showAgentStrip',
   sessionHours: 'auth.sessionHours',
+  idleMinutes: 'auth.idleMinutes',
 } as const;
 
 function read<T>(key: string, fallback: T): T {
@@ -98,6 +99,12 @@ export function sessionHours(): number {
   return Number.isFinite(stored) && stored >= 1 && stored <= 720 ? stored : DEFAULT_SESSION_HOURS;
 }
 
+/** How long an unattended screen stays signed in. */
+export function idleMinutes(): number {
+  const stored = read<number>(KEYS.idleMinutes, DEFAULT_IDLE_MINUTES);
+  return Number.isFinite(stored) && stored >= 1 && stored <= 480 ? stored : DEFAULT_IDLE_MINUTES;
+}
+
 export function units(): UnitPreferences {
   return { ...DEFAULT_SETTINGS.units, ...read<Partial<UnitPreferences>>(KEYS.units, {}) };
 }
@@ -129,6 +136,7 @@ export function current(): ClinicSettings {
     keywords: keywords(),
     followUpIntervalDays: followUpIntervalDays(),
     sessionHours: sessionHours(),
+    idleMinutes: idleMinutes(),
     showAgentStrip: read<boolean>(KEYS.agentStrip, DEFAULT_SETTINGS.showAgentStrip),
     requireDismissalReason: true,
     updatedAt: store.updatedAt(),
