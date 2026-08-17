@@ -170,12 +170,6 @@ function ModelSection({
             )}
           </p>
         )}
-        <p className="hint">
-          Every agent call goes to this provider. There is no local engine behind it: if the
-          provider cannot be reached, is out of credit, or rejects the key, the work stops and the
-          provider's own message is shown, rather than the system answering anyway with something a
-          model never wrote.
-        </p>
         {!live && (
           <p className="notice" style={{ marginTop: 'var(--gap-3)' }}>
             <strong>No API key yet.</strong> Nothing can be assessed until one is added — encounters
