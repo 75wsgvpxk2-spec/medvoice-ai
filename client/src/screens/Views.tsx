@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import type { AgentRun, Clinician } from '../../../shared/types';
+import { PROVIDER_PRESETS } from '../../../shared/types';
 import { Automations } from '../components/Automations';
 import { api, ApiError, type PatientPage, type SpendSummary, type Transparency } from '../api';
 import { StatusMarker, ErrorState, EmptyState } from '../components';
@@ -729,7 +730,43 @@ export function AgentActivity({ clinician }: { clinician: Clinician; onBack?: ()
  */
 function AiTransparency({ t, spend }: { t: Transparency; spend: SpendSummary }) {
   const [open, setOpen] = useState(false);
-  const live = t.configuredProvider === 'anthropic';
+  const live = t.configuredProvider !== 'deterministic';
+
+  /*
+   * Name the provider from the endpoint rather than assuming one.
+   *
+   * This said "Claude" whatever was running, which on a clinic using Gemini is
+   * not a cosmetic slip — this panel exists so somebody can see where patient
+   * text is being sent, and a wrong name there is worse than no name.
+   */
+  const preset = PROVIDER_PRESETS.find(
+    (p) => p.baseUrl && t.endpoint.startsWith(p.baseUrl.replace(/\/$/, '')),
+  );
+  let providerName = preset?.label ?? 'Anthropic (Claude)';
+  if (!preset && t.endpoint) {
+    try {
+      const host = new URL(t.endpoint).hostname;
+      if (!/anthropic\.com$/i.test(host)) {
+        providerName = /^(localhost|127\.|0\.0\.0\.0|\[::1\])/.test(host)
+          ? `Local — ${host}`
+          : host;
+      }
+    } catch {
+      /* Not a URL we can parse; the default stands. */
+    }
+  }
+
+  /*
+   * Two bars, not three.
+   *
+   * "Answered by a model" and "answered locally" are the partition — every call
+   * is one or the other. Whether a call was cached is a different question
+   * entirely, so it sits below as a note rather than competing for the same
+   * hundred per cent. Rendering it as a third slice is what made the figures
+   * read 132 + 72 + 17 out of 162.
+   */
+  const cachedShare =
+    spend.totalCalls > 0 ? Math.round((spend.cachedCalls / spend.totalCalls) * 100) : 0;
 
   return (
     <section className="card stack">
@@ -743,11 +780,13 @@ function AiTransparency({ t, spend }: { t: Transparency; spend: SpendSummary }) 
       <dl className="facts">
         <div>
           <dt>Engine</dt>
-          <dd>{live ? `Claude · ${t.configuredModel}` : 'Deterministic, on this machine'}</dd>
+          <dd>{live ? `${providerName} · ${t.configuredModel}` : 'Deterministic, on this machine'}</dd>
         </div>
         <div>
           <dt>Endpoint</dt>
-          <dd className="tabular">{live ? t.endpoint : 'No network calls'}</dd>
+          <dd className="tabular endpoint" title={t.endpoint}>
+            {live ? t.endpoint : 'No network calls'}
+          </dd>
         </div>
         <div>
           <dt>Key source</dt>
@@ -768,8 +807,12 @@ function AiTransparency({ t, spend }: { t: Transparency; spend: SpendSummary }) 
       {/* Where the words actually came from. A cached or local answer is not a
           model answer, and a clinician reading a flag deserves to know which. */}
       <div className="usage-bars">
-        <UsageBar label="Answered live by the model" value={spend.liveCalls} total={spend.totalCalls} tone="live" />
-        <UsageBar label="Served from cache" value={spend.cachedCalls} total={spend.totalCalls} tone="cache" />
+        <UsageBar
+          label="Answered by the model"
+          value={spend.liveCalls}
+          total={spend.totalCalls}
+          tone="live"
+        />
         <UsageBar
           label="Answered by the local engine"
           value={spend.deterministicCalls}
@@ -777,6 +820,12 @@ function AiTransparency({ t, spend }: { t: Transparency; spend: SpendSummary }) 
           tone="local"
         />
       </div>
+
+      <p className="hint">
+        {spend.cachedCalls > 0
+          ? `Of those, ${spend.cachedCalls.toLocaleString()} (${cachedShare}%) were served from the agent cache — an identical question already answered, costing nothing and sent nowhere.`
+          : 'None were served from cache yet; every call so far was answered fresh.'}
+      </p>
 
       {t.degraded > 0 && (
         <div className="error stack" style={{ gap: 'var(--gap-2)' }}>

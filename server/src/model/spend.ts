@@ -68,12 +68,25 @@ export interface SpendSummary {
   byAgent: Array<{ agent: string; calls: number; costUsd: number }>;
 }
 
+/**
+ * Spend and call counts. Section 11.
+ *
+ * Two independent facts, not three categories. Provider is the partition — a
+ * call was answered by a model or by the local engine, never both — and cached
+ * is an overlay across it: whether we had to ask at all. Collapsing them into
+ * one dimension loses the cache signal entirely on a deterministic install,
+ * which is exactly what PF-6 exists to observe.
+ *
+ * liveCalls counts any non-deterministic provider rather than Anthropic
+ * specifically: the older form meant a clinic on Gemini, OpenAI or a local
+ * gateway saw none of its calls counted as live.
+ */
 export function summariseSpend(): SpendSummary {
   const totals = db()
     .prepare(
       `SELECT
          COUNT(*)                                            AS totalCalls,
-         COALESCE(SUM(provider = 'anthropic'), 0)            AS liveCalls,
+         COALESCE(SUM(provider <> 'deterministic'), 0)       AS liveCalls,
          COALESCE(SUM(provider = 'deterministic'), 0)        AS deterministicCalls,
          COALESCE(SUM(cached), 0)                            AS cachedCalls,
          COALESCE(SUM(input_tokens), 0)                      AS inputTokens,

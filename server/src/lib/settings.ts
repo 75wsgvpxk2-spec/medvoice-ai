@@ -73,8 +73,22 @@ export function activeProvider(): 'anthropic' | 'compatible' | 'deterministic' {
     return apiKey() || baseUrl() ? 'compatible' : 'deterministic';
   }
 
-  // 'auto' and 'anthropic' both need a key; without one the local engine
-  // serves, which is the same degradation a clinic with no account gets.
+  if (chosen === 'anthropic') return apiKey() ? 'anthropic' : 'deterministic';
+
+  /*
+   * 'auto' means "work out what I have", and an endpoint is part of what the
+   * clinic has. Picking the Gemini preset and leaving the mode on Automatic
+   * used to route Google's URL through the Anthropic SDK, which fails in a way
+   * that looks like a broken integration rather than a setting.
+   *
+   * So: a base URL that is not Anthropic's implies the OpenAI-compatible
+   * adapter, whatever else is set.
+   */
+  const endpoint = baseUrl();
+  if (endpoint && !/(^|\.)anthropic\.com/i.test(endpoint)) {
+    return apiKey() || endpoint ? 'compatible' : 'deterministic';
+  }
+
   return apiKey() ? 'anthropic' : 'deterministic';
 }
 

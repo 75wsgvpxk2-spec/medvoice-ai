@@ -11,6 +11,7 @@ import {
   settings,
 } from '../server/src/db/repositories.ts';
 import { callAgent } from '../server/src/model/provider.ts';
+import { activeProvider } from '../server/src/lib/settings.ts';
 import { PROVIDER_PRESETS } from '../shared/types.ts';
 import { summariseSpend } from '../server/src/model/spend.ts';
 import { db } from '../server/src/db/index.ts';
@@ -469,4 +470,40 @@ describe('Provider flexibility', () => {
     expect(free?.baseUrl).toContain('generativelanguage.googleapis.com');
     expect(free?.keyUrl).toBeTruthy();
   });
+});
+
+describe('AI usage reporting', () => {
+  beforeAll(() => {
+    freshPopulation();
+  });
+
+  it('routes an OpenAI-compatible endpoint correctly even on Automatic', () => {
+    // Picking the Gemini preset and leaving the mode on Automatic used to send
+    // Google's URL through the Anthropic SDK, which fails looking like a broken
+    // integration rather than a setting. An endpoint is part of "what I have".
+    settings.put('model.provider', 'auto', 'test');
+    settings.put('model.apiKey', 'a-key-that-is-long-enough-000000', 'test');
+    settings.put('model.baseUrl', 'https://generativelanguage.googleapis.com/v1beta/openai/', 'test');
+    expect(activeProvider()).toBe('compatible');
+
+    // An Anthropic endpoint, or none at all, still means Anthropic.
+    settings.put('model.baseUrl', '', 'test');
+    expect(activeProvider()).toBe('anthropic');
+  });
+
+  it('attributes every call to one provider, with caching as an overlay', async () => {
+    // Needs real calls: an earlier version of this test asserted a three-way
+    // partition and passed only because it ran against an empty database.
+    await runPopulation(CLINICIAN_ID, { asOf: AS_OF });
+    const spend = summariseSpend();
+    expect(spend.totalCalls).toBeGreaterThan(0);
+
+    // Provider is the partition — model or local engine, never both.
+    expect(spend.liveCalls + spend.deterministicCalls).toBe(spend.totalCalls);
+
+    // Cached cuts across it: how many of those we did not have to ask for.
+    // It is a subset, not a third category, which is why the usage panel shows
+    // it as a note rather than a third bar.
+    expect(spend.cachedCalls).toBeLessThanOrEqual(spend.totalCalls);
+  }, 300_000);
 });

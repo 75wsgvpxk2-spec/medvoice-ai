@@ -2274,3 +2274,16 @@ tbody tr:hover { background: var(--brand-wash); }
   font-size: var(--text-sm);
   color: var(--ink-secondary);
 }
+
+/* A long endpoint must not run off the card. Wrapped rather than truncated:
+   which host patient text is sent to is worth reading in full. */
+.facts dd.endpoint {
+  font-size: var(--text-sm);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.facts dd {
+  overflow-wrap: anywhere;
+}

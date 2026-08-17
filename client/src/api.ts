@@ -181,7 +181,7 @@ export interface SpendSummary {
 }
 
 export interface Transparency {
-  configuredProvider: 'anthropic' | 'deterministic';
+  configuredProvider: 'anthropic' | 'compatible' | 'deterministic';
   configuredModel: string;
   endpoint: string;
   keySource: 'settings' | 'environment' | 'none';
