@@ -115,12 +115,9 @@ function ModelSection({
   const activePreset = PROVIDER_PRESETS.find((x) => x.id === preset);
 
   /*
-   * There is no "when to use it" control any more, and there should not be: the
-   * provider chosen above is always used when it can be, and the local engine
-   * catches whatever falls through — a missing key, an unreachable endpoint, a
-   * rejected request. That left a mode selector whose only real setting was the
-   * one everybody wanted, so the screen reports the resolved engine instead of
-   * asking a clinic to configure it.
+   * Whether a usable provider is configured at all. There is nothing behind it:
+   * without a key the agents cannot run, so this is a setup state rather than a
+   * mode, and the screen reports it instead of offering it as a choice.
    */
   const live = view.activeProvider !== 'deterministic';
 
@@ -129,7 +126,7 @@ function ModelSection({
       <div className="spread">
         <h2>Model</h2>
         <span className={`pill ${live ? 'pill-live' : ''}`}>
-          {live ? 'Live model' : 'Local engine'}
+          {live ? 'Connected' : 'Not configured'}
         </span>
       </div>
 
@@ -174,11 +171,17 @@ function ModelSection({
           </p>
         )}
         <p className="hint">
-          This provider is used for every agent call. If it has no key, cannot be reached, or
-          refuses a request, the local engine takes over — it runs the same agents with encoded
-          reasoning instead of a model, costs nothing, and needs no network.
-          {!live && ' No usable key is set, so the local engine is running now.'}
+          Every agent call goes to this provider. There is no local engine behind it: if the
+          provider cannot be reached, is out of credit, or rejects the key, the work stops and the
+          provider's own message is shown, rather than the system answering anyway with something a
+          model never wrote.
         </p>
+        {!live && (
+          <p className="notice" style={{ marginTop: 'var(--gap-3)' }}>
+            <strong>No API key yet.</strong> Nothing can be assessed until one is added — encounters
+            will not structure and the queue will not rank. Add a key below to finish setting up.
+          </p>
+        )}
       </div>
 
       <div className="field-pair">

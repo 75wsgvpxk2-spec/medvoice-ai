@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Clinician, QueueView, Patient } from '../../shared/types';
 import { api, ApiError, onSessionEnded, type ApprovalOutcome } from './api';
 import { useClinicStream } from './lib/stream';
@@ -39,6 +39,8 @@ export function App() {
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   /** Something to tell the clinician on whichever screen they land on next. */
   const [notice, setNotice] = useState<string | null>(null);
+  /** So the first-run prompt fires once, not on every settings fetch. */
+  const promptedForKey = useRef(false);
   const [route, setRoute] = useState<Route>({ name: 'queue' });
 
   const [queue, setQueue] = useState<QueueView | null>(null);
@@ -120,7 +122,30 @@ export function App() {
         applyBranding(r.clinic);
       })
       .catch(() => setClinic(null));
-    api.settings().then((r) => setShowStrip(r.settings.showAgentStrip)).catch(() => setShowStrip(true));
+    api
+      .settings()
+      .then((r) => {
+        setShowStrip(r.settings.showAgentStrip);
+        /*
+         * The platform runs on live models and has nothing behind them, so a
+         * clinic with no provider configured cannot do any clinical work at
+         * all — every agent call will stop and say so. Sending them straight
+         * to Settings on the first load after signing up is the difference
+         * between a product that explains itself and one that appears broken.
+         *
+         * Once per session, and never on top of a screen they chose: a
+         * clinician who navigated somewhere deliberately is not redirected out
+         * of it.
+         */
+        if (r.activeProvider === 'deterministic' && !promptedForKey.current) {
+          promptedForKey.current = true;
+          setRoute({ name: 'settings' });
+          setNotice(
+            'Add an API key to finish setting up. The agents run on a live model, so nothing can be assessed until a provider is configured.',
+          );
+        }
+      })
+      .catch(() => setShowStrip(true));
   }, [clinician, loadQueue]);
 
   if (checkingSession) return <div style={{ padding: 'var(--gap-6)' }}>Checking your session…</div>;

@@ -44,12 +44,17 @@ Notable changes. Dates are the day the work landed on `main`.
 - Docker image and compose file.
 
 ### Changed
+- **The platform runs on live models only.** There is no local engine behind
+  them any more. A provider that is unreachable, out of credit, rate limited or
+  rejecting the key stops the work and shows the provider's own reason, instead
+  of answering with encoded rules and presenting the result as agent output — a
+  clinician cannot audit reasoning that never happened. The raw note is still
+  saved before any model call, so a failure never costs the clinician their
+  words. An installation with no provider configured lands on Settings.
 - **`npm test` no longer needs an API key.** The suite runs on the deterministic
   engine in seconds; `npm run test:live` exercises the model.
 - The access boundary is the installation rather than the clinician — staff at
   one clinic share a caseload. See `docs/DEVIATIONS.md` item 2.
-- Model calls fall back to the local engine when the API is unreachable, out of
-  credit or rejecting the key, instead of failing the request.
 - Approving a note returns to the patient's record rather than the priority
   queue. The results land on both, and the record is the one the clinician was
   already looking at. See `docs/DEVIATIONS.md` item 8.

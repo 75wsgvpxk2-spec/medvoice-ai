@@ -40,6 +40,17 @@ export const config = {
    */
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? null,
 
+  /*
+   * Lets the scenario suite run the agents with encoded stand-ins instead of a
+   * live model, so 145 clinical tests need no key, no network and no bill.
+   *
+   * Set only by `npm test`. The platform itself runs on live models and has no
+   * local engine behind them: a fallback that answers with encoded rules puts
+   * clinical text on screen attributed to an agent that never ran, which a
+   * clinician has no way to see or audit. Never set this in a deployment.
+   */
+  useTestDouble: process.env.MODEL_TEST_DOUBLE === '1',
+
   /**
    * Claude Opus 5. Thinking is on by default on this model and counts toward
    * max_tokens, so every agent call below sets max_tokens with headroom.

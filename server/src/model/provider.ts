@@ -120,6 +120,45 @@ export class ModelRefusalError extends Error {
   }
 }
 
+/**
+ * The configured provider could not answer.
+ *
+ * This platform runs on live models. There is no local engine standing behind
+ * them any more, and that is deliberate: a fallback that quietly answers with
+ * encoded rules produces clinical text nobody asked a model for, attributed to
+ * an agent, with no sign on the screen that the model was never involved. A
+ * clinician cannot audit what they cannot see. So a provider that is
+ * unreachable, out of credit, rate limited or rejecting the key now stops the
+ * work and says exactly what the provider said.
+ */
+export class ModelUnavailableError extends Error {
+  constructor(
+    readonly reason: string,
+    readonly agent: string,
+  ) {
+    /*
+     * The reasons are written as fragments — "the API key was rejected" — so
+     * they read correctly inside a sentence. This is the sentence. It goes
+     * straight to the clinician, so it has to say what happened, that their
+     * work is safe, and what to do next; a bare fragment on screen reads like
+     * a leaked internal string.
+     */
+    super(
+      `The model could not be reached — ${reason}. Nothing has been lost; the note is saved. ` +
+        'Check the provider under Settings, then try again.',
+    );
+    this.name = 'ModelUnavailableError';
+  }
+}
+
+/** No provider is configured at all — the clinic has not added a key yet. */
+export class ModelNotConfiguredError extends Error {
+  constructor() {
+    super('No model provider is set up yet. Add an API key under Settings to start using the agents.');
+    this.name = 'ModelNotConfiguredError';
+  }
+}
+
 export class ModelOutputError extends Error {
   constructor(message: string) {
     super(message);
@@ -157,7 +196,14 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
     }
   }
 
+  /*
+   * No provider configured. In the product this is an error the clinic can act
+   * on — the encoded engine is reachable only from the test harness, which
+   * sets MODEL_TEST_DOUBLE so the scenario suite can run without a key or a
+   * bill. Nothing a clinician touches can reach it.
+   */
   if (settings.activeProvider() === 'deterministic') {
+    if (!config.useTestDouble) throw new ModelNotConfiguredError();
     const output = options.deterministic();
     const durationMs = Date.now() - startedAt;
     recordCall({
@@ -173,42 +219,30 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
   }
 
   /**
-   * Falls back to the local engine when the model cannot be reached at all.
+   * The provider could not answer, so neither can we.
    *
-   * PF-3 asks for a network failure not to lose the encounter, and the same
-   * answer covers the cases that turn out to matter just as much in practice:
-   * a key that is wrong, a key whose account has run out of credit, a rate
-   * limit, or the API being down. All of them used to take the whole system
-   * with them — which left a clinic with a bad key strictly worse off than one
-   * with no key at all, since the no-key path has always worked.
+   * PF-3's requirement — a failure must not lose the encounter — is met where
+   * it always mattered: the raw note is persisted at submit, before any of
+   * this runs, so the clinician's words survive a failed call and the work can
+   * be retried. What is no longer done is answering anyway with encoded rules
+   * and labelling it agent output.
    *
-   * Deliberately NOT caught: a refusal, or output that will not parse. Those
-   * mean the model answered and the answer was unusable, which is a different
-   * problem and has to stay visible rather than be papered over with a local
-   * result the clinician would not know was local.
+   * The reason is recorded against the run and returned to the screen verbatim,
+   * because "rate limited" and "the key was rejected" need different actions
+   * from the clinic and only the provider knows which one happened.
    */
-  const degrade = (reason: string) => {
-    const output = options.deterministic();
-    const durationMs = Date.now() - startedAt;
-    console.error(`MODEL UNAVAILABLE (${options.agent}): ${reason} — used the local engine`);
+  const unavailable = (reason: string): never => {
+    console.error(`MODEL UNAVAILABLE (${options.agent}): ${reason}`);
     recordCall({
       agent: options.agent,
-      provider: 'deterministic',
-      model: 'deterministic',
+      provider: settings.activeProvider(),
+      model: settings.modelId(),
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
-      durationMs,
+      durationMs: Date.now() - startedAt,
       cached: false,
       degradedReason: reason,
     });
-    if (options.cacheKey) writeCache(options.cacheKey, options.agent, output);
-    return {
-      output,
-      provider: 'deterministic' as const,
-      cached: false,
-      durationMs,
-      costUsd: 0,
-      degradedReason: reason,
-    };
+    throw new ModelUnavailableError(reason, options.agent);
   };
 
   /*
@@ -228,7 +262,7 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
       });
     } catch (error) {
       const reason = unavailableReason(error);
-      if (reason) return degrade(reason);
+      if (reason) unavailable(reason);
       throw error;
     }
 
@@ -283,7 +317,7 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
     );
   } catch (error) {
     const reason = unavailableReason(error);
-    if (reason) return degrade(reason);
+    if (reason) unavailable(reason);
     throw error;
   }
 
@@ -404,7 +438,7 @@ function unavailableReason(error: unknown): string | null {
   const message = chain.filter(Boolean).join(' | ');
 
   if (/APIConnectionError|APIConnectionTimeoutError/i.test(message)) {
-    return 'the API could not be reached';
+    return 'the endpoint did not respond';
   }
   if (status === 401 || status === 403) return 'the API key was rejected';
   // An exhausted balance comes back as a 400, not a payment status, so the
@@ -416,7 +450,7 @@ function unavailableReason(error: unknown): string | null {
   if (status === 429) return 'the request was rate limited';
   if (typeof status === 'number' && status >= 500) return `the API returned ${status}`;
   if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|fetch failed|aborted|timed? ?out/i.test(message)) {
-    return 'the API could not be reached';
+    return 'the endpoint did not respond';
   }
   return null;
 }

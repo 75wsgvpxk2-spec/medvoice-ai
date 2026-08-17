@@ -18,6 +18,7 @@ import { activeProvider } from '../server/src/lib/settings.ts';
 import { PROVIDER_PRESETS } from '../shared/types.ts';
 import { summariseSpend } from '../server/src/model/spend.ts';
 import { db } from '../server/src/db/index.ts';
+import { config } from '../server/src/lib/config.ts';
 import { extractValues } from '../server/src/agents/structuring.ts';
 import { readPaging, pageMeta, takePage } from '../server/src/lib/paging.ts';
 import { api, endsTheSession, onSessionEnded } from '../client/src/api.ts';
@@ -443,30 +444,50 @@ describe('Provider flexibility', () => {
       deterministic: () => ({ status: 'local engine' }),
     });
 
-  it('falls back to the local engine when an OpenAI-compatible endpoint is unreachable', async () => {
+  it('stops and says why when an OpenAI-compatible endpoint is unreachable', async () => {
     settings.put('model.provider', 'compatible', 'test');
     // Nothing listens here. The SDK wraps this in an APIConnectionError whose
     // message is only "Connection error." — the ECONNREFUSED is nested in
-    // `cause`, which an earlier version of the fallback missed entirely and so
-    // threw in the clinician's face instead of degrading.
+    // `cause`, so the reason has to be dug out of the chain to be any use.
     settings.put('model.baseUrl', 'http://127.0.0.1:5399/v1', 'test');
     settings.put('model.apiKey', 'not-a-real-key-000000000000', 'test');
 
-    const result = await call();
-    expect(result.provider).toBe('deterministic');
-    expect(result.degradedReason).toMatch(/could not be reached/i);
-    expect(result.output.status).toBe('local engine');
+    /*
+     * There is no local engine behind the model any more. Answering anyway
+     * with encoded rules would put clinical text on screen attributed to an
+     * agent that never ran, and nothing on the screen would say so — which a
+     * clinician has no way to audit. Failing loudly is the safer answer.
+     */
+    await expect(call()).rejects.toThrow(/could not be reached/i);
   });
 
-  it('falls back the same way on the Anthropic path', async () => {
+  it('fails the same way on the Anthropic path', async () => {
     settings.put('model.provider', 'anthropic', 'test');
     settings.put('model.baseUrl', 'http://127.0.0.1:5399', 'test');
 
-    const result = await call();
     // One contract, two wire formats: a clinic swapping provider must not be
-    // swapping the safety behaviour too.
-    expect(result.provider).toBe('deterministic');
-    expect(result.degradedReason).toMatch(/could not be reached/i);
+    // swapping the failure behaviour too.
+    await expect(call()).rejects.toThrow(/could not be reached/i);
+  });
+
+  it('says what to do when no provider has been set up at all', async () => {
+    settings.remove('model.apiKey');
+    settings.put('model.baseUrl', '', 'test');
+    settings.put('model.provider', 'auto', 'test');
+
+    /*
+     * The suite runs with the test double on, which is the only thing that can
+     * reach the encoded engine. Turning it off here is what the product does
+     * every time: a clinic with no key gets an instruction, not a stack trace
+     * and not a silent local answer nobody asked for.
+     */
+    const double = config.useTestDouble;
+    (config as { useTestDouble: boolean }).useTestDouble = false;
+    try {
+      await expect(call()).rejects.toThrow(/Settings/i);
+    } finally {
+      (config as { useTestDouble: boolean }).useTestDouble = double;
+    }
   });
 
   it('offers a provider with a genuine free tier', () => {

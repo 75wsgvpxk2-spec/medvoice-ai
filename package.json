@@ -17,8 +17,8 @@
     "inspect": "tsx scripts/inspect.ts",
     "spend": "tsx scripts/spend.ts",
     "gate": "tsx scripts/gate.ts",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "cross-env MODEL_TEST_DOUBLE=1 vitest run",
+    "test:watch": "cross-env MODEL_TEST_DOUBLE=1 vitest",
     "setup": "tsx scripts/setup.ts",
     "seed:demo": "tsx scripts/seed.ts",
     "test:live": "cross-env LIVE_MODEL=1 vitest run"

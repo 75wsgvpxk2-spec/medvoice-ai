@@ -154,10 +154,17 @@ Settings accepts any name if it moves on.
 Running the models on your own hardware answers the data-residency question
 outright — with a local endpoint, no patient text leaves the building.
 
-**No key, no problem.** Without one the whole system runs on a deterministic
-local engine that exercises every path. It is also the fallback whenever a
-provider is unreachable, out of credit, or rejecting the key — whichever
-provider you chose.
+**A key is required.** The agents run on a live model and there is nothing
+behind them. If the provider is unreachable, out of credit, or rejecting the
+key, the work stops and the provider's own message is shown — the system does
+not answer anyway with encoded rules and present it as agent output. A
+clinician cannot audit reasoning that never happened, so it is not produced.
+
+A new installation lands on Settings until a provider is configured.
+
+The scenario suite is the exception, and only the suite: `npm test` runs the
+agents against encoded stand-ins so 146 clinical tests need no key, no network
+and no bill. Nothing a clinician can reach goes near them.
 
 ### Stack
 
@@ -175,7 +182,7 @@ Vitest. Hand-written CSS. No ORM, no component library, no state manager — see
 | `npm run seed:demo` | Loads the 15-patient fictional population |
 | `npm run dev` | Server and client together; sign in at http://localhost:5173 |
 | `npm start` | Production server |
-| `npm test` | The full scenario suite — 105 tests, no API key needed |
+| `npm test` | The full scenario suite — 146 tests, no API key needed |
 | `npm run test:live` | The same suite against the real model |
 | `npm run inspect` | Population overview |
 | `npm run inspect -- beaupierre` | One patient in full — history, flags, alerts, monitoring |
