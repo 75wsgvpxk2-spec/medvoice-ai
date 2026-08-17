@@ -1,5 +1,5 @@
 import { id, now } from '../db/index.ts';
-import { patients, alerts, orders, billing, flags, encounters } from '../db/repositories.ts';
+import { patients, alerts, orders, billing, flags, encounters, observations } from '../db/repositories.ts';
 import { assessPatientRun, rerankQueue } from './clinical-intelligence.ts';
 import type { BillingEntry, Order, PatientStatus, RiskFlag } from '../../../shared/types.ts';
 
@@ -70,6 +70,25 @@ export function previewResolution(alertId: string): {
     willAddCondition: alert.resolution.addsCondition?.name ?? null,
     willOpenAmendment: alert.resolution.opensAmendment?.encounterId ?? null,
   };
+}
+
+/**
+ * Whether "managed" is a claim this record can support.
+ *
+ * Section 4: managed means a risk was identified and a clinician acted on it,
+ * and a managed patient drops out of the urgent positions. Read literally,
+ * "no active flags" was enough to earn it — but no flags has two very different
+ * causes. It can mean the assessment looked and found nothing, or it can mean
+ * the assessment had nothing to look at.
+ *
+ * A patient with no observations on file falls into the second case, and
+ * calling them managed states that a risk was handled when nothing was ever
+ * measured. That is the one direction this system must never round in: it is
+ * how a patient whose blood pressure was never recorded ends up looking like a
+ * patient whose blood pressure is fine.
+ */
+function canBeCalledManaged(patientId: string): boolean {
+  return observations.forPatient(patientId).length > 0;
 }
 
 /** Human decision point two. Nothing here happens without the clinician's tap. */
@@ -176,7 +195,7 @@ export async function resolveAlert(
    * See docs/DEVIATIONS.md.
    */
   let statusAfter = assessment.status;
-  if (assessment.flags.length === 0) {
+  if (assessment.flags.length === 0 && canBeCalledManaged(alert.patientId)) {
     patients.setStatus(alert.patientId, 'managed', timestamp);
     statusAfter = 'managed';
   }
@@ -290,7 +309,7 @@ export async function closeAlertWithoutAction(
   });
 
   let statusAfter = assessment.status;
-  if (assessment.flags.length === 0) {
+  if (assessment.flags.length === 0 && canBeCalledManaged(alert.patientId)) {
     patients.setStatus(alert.patientId, 'managed', timestamp);
     statusAfter = 'managed';
   }

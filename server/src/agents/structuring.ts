@@ -117,7 +117,155 @@ export interface Extracted {
   matchedText: string;
 }
 
-export function extractValues(note: string): Extracted[] {
+/* ------------------------------------------------------ spoken numbers -- */
+
+const SMALL: Record<string, number> = {
+  zero: 0, oh: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14,
+  fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+};
+
+const TENS: Record<string, number> = {
+  twenty: 20, thirty: 30, forty: 40, fourty: 40, fifty: 50, sixty: 60,
+  seventy: 70, eighty: 80, ninety: 90,
+};
+
+/**
+ * Turn dictated number words into figures: "one sixty four" becomes 164.
+ *
+ * Encounters here are voice-first, and every measurement pattern below matches
+ * digits. A clinician who speaks a reading produces words, so without this step
+ * the extractor finds nothing in a dictated note and no observation ever
+ * reaches the record — which leaves the rules engine with nothing to evaluate
+ * and a patient with no readings looking exactly like a patient who is well.
+ *
+ * Clinical speech is not textbook English. Nobody says "one hundred and sixty
+ * four over ninety eight"; they say "one sixty four over ninety eight". So a
+ * digit followed by a two-digit group means hundreds — "one eighteen" is 118,
+ * not 1 and 18 — while the written form still parses the ordinary way.
+ *
+ * This never touches the stored note. A1-4 requires the raw text be kept byte
+ * for byte; this runs on a copy on its way to the pattern matcher.
+ */
+export function normaliseSpokenNumbers(text: string): string {
+  // Split on runs of letters, so punctuation is its own token: "ninety eight."
+  // must not arrive as the single word "eight." Digits pass through untouched,
+  // which leaves an already-written "7.4" alone.
+  const tokens = text.split(/([A-Za-z]+)/);
+  const out: string[] = [];
+  let phrase: string[] = [];
+
+  const flush = () => {
+    if (phrase.length > 0) {
+      out.push(convertPhrase(phrase));
+      phrase = [];
+    }
+  };
+
+  for (const token of tokens) {
+    const word = token.toLowerCase();
+    const isNumberWord =
+      word in SMALL || word in TENS || word === 'hundred' || word === 'thousand' || word === 'point';
+    // "and" only continues a phrase that has already said "hundred", so
+    // "eighty two and the chest is clear" does not swallow the conjunction.
+    const isConnector = word === 'and' && phrase.some((p) => p.toLowerCase() === 'hundred');
+
+    if (isNumberWord || isConnector) {
+      phrase.push(token);
+      continue;
+    }
+    // Whitespace inside a phrase keeps it going; anything else ends it.
+    if (/^\s+$/.test(token) && phrase.length > 0) {
+      phrase.push(token);
+      continue;
+    }
+    flush();
+    out.push(token);
+  }
+  flush();
+
+  // Trailing whitespace swallowed into a phrase is put back by convertPhrase.
+  return out.join('');
+}
+
+/** One run of number words, with its original spacing, as a figure. */
+function convertPhrase(phrase: string[]): string {
+  const trailing = /\s+$/.exec(phrase.join(''))?.[0] ?? '';
+  const words = phrase
+    .join('')
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.toLowerCase())
+    .filter(Boolean);
+
+  if (words.length === 0) return phrase.join('');
+
+  const pointAt = words.indexOf('point');
+  const whole = pointAt === -1 ? words : words.slice(0, pointAt);
+  const decimals = pointAt === -1 ? [] : words.slice(pointAt + 1);
+
+  const value = convertWhole(whole);
+  if (value === null) return phrase.join('');
+
+  // Decimals are spoken digit by digit: "seven point four", "thirty eight
+  // point nine". Anything else there is not a number and is left alone.
+  const digits = decimals.map((w) => SMALL[w]).filter((d) => d !== undefined && d < 10);
+  if (decimals.length > 0 && digits.length !== decimals.length) return phrase.join('');
+
+  const text = digits.length > 0 ? `${value}.${digits.join('')}` : String(value);
+  return text + trailing;
+}
+
+function convertWhole(words: string[]): number | null {
+  if (words.length === 0) return null;
+
+  // The written form, with explicit multipliers.
+  if (words.includes('hundred') || words.includes('thousand')) {
+    let total = 0;
+    let current = 0;
+    for (const word of words) {
+      if (word === 'and') continue;
+      if (word === 'hundred') current = (current || 1) * 100;
+      else if (word === 'thousand') {
+        total += (current || 1) * 1000;
+        current = 0;
+      } else {
+        const n = SMALL[word] ?? TENS[word];
+        if (n === undefined) return null;
+        current += n;
+      }
+    }
+    return total + current;
+  }
+
+  // The spoken form. A leading single digit in front of a two-digit group is
+  // hundreds: "one sixty four" is 164, "one eighteen" is 118.
+  let value = 0;
+  let openTens = false;
+  for (const word of words) {
+    const n = SMALL[word] ?? TENS[word];
+    if (n === undefined) return null;
+
+    if (value >= 1 && value <= 9 && n >= 10) {
+      value = value * 100 + n;
+      openTens = n % 10 === 0;
+    } else if (openTens && n >= 1 && n <= 9) {
+      value += n;
+      openTens = false;
+    } else if (value === 0) {
+      value = n;
+      openTens = n >= 20 && n % 10 === 0;
+    } else {
+      // Two separate numbers side by side; not something to merge.
+      return null;
+    }
+  }
+  return value;
+}
+
+export function extractValues(rawNote: string): Extracted[] {
+  // Dictated words become figures before any pattern runs.
+  const note = normaliseSpokenNumbers(rawNote);
   const found: Extracted[] = [];
 
   for (const measure of MEASURES) {
@@ -427,9 +575,17 @@ const STRUCTURE_SCHEMA = {
 
 /** Rule-based structuring, used when no model is available. */
 export function structureDeterministically(rawNote: string): StructuringResult {
-  const extracted = extractValues(rawNote);
+  /*
+   * Sections are built from the normalised text, not the raw note, so that a
+   * dictated "one sixty four over ninety eight" appears in the objective as
+   * 164/98 — the same form the model path produces, and the form the record
+   * and every downstream reader expect. The raw note itself is untouched and
+   * still stored byte for byte (A1-4).
+   */
+  const note = normaliseSpokenNumbers(rawNote);
+  const extracted = extractValues(note);
   const contradictions = findContradictions(extracted);
-  const sentences = splitSentences(rawNote);
+  const sentences = splitSentences(note);
 
   const sections: StructuredContent = { subjective: '', objective: '', assessment: '', plan: '' };
   for (const sentence of sentences) {

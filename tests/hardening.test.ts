@@ -11,12 +11,14 @@ import {
   settings,
   orders,
   billing,
+  observations,
 } from '../server/src/db/repositories.ts';
 import { callAgent } from '../server/src/model/provider.ts';
 import { activeProvider } from '../server/src/lib/settings.ts';
 import { PROVIDER_PRESETS } from '../shared/types.ts';
 import { summariseSpend } from '../server/src/model/spend.ts';
 import { db } from '../server/src/db/index.ts';
+import { extractValues } from '../server/src/agents/structuring.ts';
 import { readPaging, pageMeta, takePage } from '../server/src/lib/paging.ts';
 import { api, endsTheSession, onSessionEnded } from '../client/src/api.ts';
 import {
@@ -834,5 +836,100 @@ describe('Documentation gaps can be closed by hand as well as automatically', ()
     // An auditor asking "was this work done, or waved through" needs the
     // record to answer. Closed alone does not.
     expect(alerts.byId(alert.id)!.route).toBe('automatic');
+  }, 300_000);
+});
+
+/*
+ * Observations have to survive dictation.
+ *
+ * Every sample note in this suite is written in numerals — "Blood pressure
+ * today 192 over 124" — and observations used to be extracted by regex from
+ * the raw note. A dictated note contains words, so the extractor found nothing
+ * and no observation ever reached the record from speech, in a product whose
+ * encounters are voice-first. With no observations the rules engine has nothing
+ * to evaluate and raises no flags, which made a patient nobody had a single
+ * reading for indistinguishable from a patient who is well.
+ *
+ * Caught by a live demo, not by this suite. These are the tests that would
+ * have caught it.
+ */
+describe('A dictated note reaches the record', () => {
+  beforeAll(() => {
+    freshPopulation();
+  });
+
+  it('reads measurements out of spoken words, not just figures', () => {
+    // Clinical speech is not textbook English: "one sixty four", not "one
+    // hundred and sixty four". Both have to land on the same number, and a
+    // note already written in figures must be untouched.
+    const spoken = extractValues(
+      'Blood pressure today is one sixty four over ninety eight. Weight seventy nine kilos.',
+    );
+    expect(spoken.map((v) => v.type).sort()).toEqual(['blood_pressure', 'weight']);
+    expect(spoken.find((v) => v.type === 'blood_pressure')!.value).toBe('164/98');
+    expect(spoken.find((v) => v.type === 'weight')!.value).toBe('79');
+
+    const written = extractValues('Blood pressure 164/98 mmHg. Weight 79 kg.');
+    expect(written.find((v) => v.type === 'blood_pressure')!.value).toBe('164/98');
+  });
+
+  it('handles the spoken forms a clinician actually uses', () => {
+    const cases: Array<[string, string, string]> = [
+      ['Blood pressure one eighty six over one eighteen.', 'blood_pressure', '186/118'],
+      ['Blood pressure one hundred and sixty four over ninety.', 'blood_pressure', '164/90'],
+      ['HbA1c came back at eight point two percent.', 'hba1c', '8.2'],
+      ['Temperature thirty eight point nine degrees.', 'temperature', '38.9'],
+      ['Platelets one hundred and sixty four.', 'platelet_count', '164'],
+      ['Heart rate eighty two and regular.', 'heart_rate', '82'],
+    ];
+    for (const [note, type, expected] of cases) {
+      const found = extractValues(note).find((v) => v.type === type);
+      expect(found?.value, note).toBe(expected);
+    }
+  });
+
+  it('leaves ordinary prose alone', () => {
+    // Number words appear in sentences that are not measurements at all, and
+    // rewriting them is harmless only if nothing is extracted from them.
+    expect(
+      extractValues('She has had headaches for about two weeks and takes it twice daily.'),
+    ).toHaveLength(0);
+    expect(extractValues('Chest is clear and there is no ankle swelling.')).toHaveLength(0);
+  });
+
+  it('records observations from a dictated encounter, and flags the risk in them', async () => {
+    const patient = patientNamed(PROFILE.noHistory);
+    const before = observations.forPatient(patient.id).length;
+
+    const submission = await submitEncounter(
+      patient.id,
+      'Attends for review. Blood pressure today is one ninety two over one twenty four, ' +
+        'much higher than usual. Weight is eighty one kilos. Continue current medication and review next week.',
+      CLINICIAN_ID,
+    );
+
+    // Approval is what puts observations on the record (A2-4).
+    await approveEncounter(submission.encounter.id, CLINICIAN_ID, { asOf: AS_OF });
+
+    const after = observations.forPatient(patient.id);
+    expect(
+      after.length,
+      'a dictated encounter recorded no observations at all',
+    ).toBeGreaterThan(before);
+    expect(after.some((o) => o.type === 'blood_pressure')).toBe(true);
+  }, 300_000);
+
+  it('will not call a patient managed when nothing has ever been measured', async () => {
+    // No flags can mean "looked and found nothing" or "had nothing to look at".
+    // Only the first earns managed; the second is how a patient whose blood
+    // pressure was never recorded comes to look like one whose reading is fine.
+    const patient = patients.forClinic().find((p) => observations.forPatient(p.id).length === 0);
+    if (!patient) return; // every seeded patient has readings; nothing to assert
+
+    const alert = alerts.openForPatient(patient.id)[0];
+    if (!alert) return;
+
+    await closeAlertWithoutAction(alert.id, CLINICIAN_ID, 'manual', 'handled elsewhere');
+    expect(patients.byId(patient.id)!.status).not.toBe('managed');
   }, 300_000);
 });

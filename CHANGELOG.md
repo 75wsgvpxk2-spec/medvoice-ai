@@ -62,6 +62,22 @@ Notable changes. Dates are the day the work landed on `main`.
   display, so text a clinician can read on screen is text they can search for.
 
 ### Fixed
+- **A dictated encounter recorded no measurements at all.** Observations were
+  extracted by regex from the raw note, and the patterns match digits — but
+  speech produces words. In a voice-first product that meant no reading from a
+  dictated note ever reached the record, so the rules engine had nothing to
+  evaluate, raised no flags, and a patient nobody had a single measurement for
+  was indistinguishable from a patient who is well. Spoken numbers are now
+  normalised before extraction, including the shorthand clinicians actually use
+  ("one sixty four over ninety eight" → 164/98), and observations are read from
+  the approved objective section rather than the raw note — which also means a
+  correction made on the review screen now reaches the record, where before the
+  uncorrected value did.
+- **A patient with no measurements could be marked `managed`.** Section 4 says
+  managed means a risk was identified and a clinician acted on it. "No active
+  flags" was treated as enough, but that has two causes: the assessment looked
+  and found nothing, or it had nothing to look at. Only the first earns the
+  status now.
 - **Agents finished too fast to see.** A population assessment served from the
   cache completes in about fifty milliseconds, so the started and finished
   events landed in the same frame: the activity strip showed idle, then idle

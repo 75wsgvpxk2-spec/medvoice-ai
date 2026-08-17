@@ -294,13 +294,29 @@ function messageOf(reason: unknown): string {
  * cannot be stored as kilograms without making exactly the guess Agent 2
  * refused to make. A contradiction the clinician did not resolve is likewise
  * left out rather than silently picking one of the two readings.
+ *
+ * Read from the **approved objective section, not the raw note**, for two
+ * reasons that both come down to accuracy:
+ *
+ * 1. A dictated note contains words, not numerals — "one sixty four over
+ *    ninety eight". The extractor matches digits, so reading the raw note
+ *    captured nothing at all from speech, in a product whose encounters are
+ *    voice-first. Agent 2 has already normalised those words into figures.
+ * 2. The raw note is never modified (A1-4), so a correction the clinician made
+ *    on the review screen was invisible here. The uncorrected value went onto
+ *    the record and the corrected one did not.
+ *
+ * The failure mode this fixes is the worst one available: with no observations
+ * the rules engine has nothing to evaluate, so it raises no flags, and a
+ * patient nobody has any readings for is indistinguishable from a patient who
+ * is well.
  */
 function persistObservations(encounter: Encounter, asOf: Date): void {
   const unresolvedContradiction = encounter.fieldConfidence.some(
     (f) => f.confidence === 'flagged' && (f.readings?.length ?? 0) >= 2,
   );
 
-  const extracted = extractValues(encounter.rawNote).filter(
+  const extracted = extractValues(encounter.structured.objective).filter(
     (e) => e.type !== 'blood_glucose' && !e.flagged,
   );
 
