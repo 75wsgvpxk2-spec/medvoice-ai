@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { submitEncounter, approveEncounter, runPopulation } from '../server/src/orchestration/triggers.ts';
-import { resolveAlert } from '../server/src/agents/resolution.ts';
+import { resolveAlert, closeAlertWithoutAction } from '../server/src/agents/resolution.ts';
 import {
   patients,
   alerts,
@@ -9,6 +9,8 @@ import {
   clinicians,
   audit,
   settings,
+  orders,
+  billing,
 } from '../server/src/db/repositories.ts';
 import { callAgent } from '../server/src/model/provider.ts';
 import { activeProvider } from '../server/src/lib/settings.ts';
@@ -746,4 +748,91 @@ describe('A session that ends mid-use returns to sign-in', () => {
       globalThis.fetch = realFetch;
     }
   });
+});
+
+/*
+ * A documentation gap can be true and still not be the system's to action: the
+ * test was done at another clinic, the order went in on paper, the patient
+ * declined it. With only the automatic route those gaps stayed open forever,
+ * so the list filled with work nobody could clear — and a list that cannot be
+ * cleared stops being read, which is how a real gap gets missed.
+ */
+describe('Documentation gaps can be closed by hand as well as automatically', () => {
+  beforeAll(async () => {
+    freshPopulation();
+    await runPopulation(CLINICIAN_ID, { asOf: AS_OF });
+  }, 300_000);
+
+  const anyOpenAlert = () => {
+    for (const patient of patients.forClinic()) {
+      const open = alerts.openForPatient(patient.id);
+      if (open.length > 0) return open[0]!;
+    }
+    throw new Error('the seeded population raised no documentation gaps');
+  };
+
+  it('records that the clinician had already done it, and invents no order', async () => {
+    const alert = anyOpenAlert();
+    const ordersBefore = orders.forPatient(alert.patientId).length;
+    const billingBefore = billing.forPatient(alert.patientId).length;
+
+    const outcome = await closeAlertWithoutAction(
+      alert.id,
+      CLINICIAN_ID,
+      'manual',
+      'Ordered on paper at the visit.',
+    );
+
+    expect(outcome.alertClosed).toBe(true);
+    // The whole guarantee of the automatic route is that the record reflects
+    // real clinical action. Writing an order for work done elsewhere would
+    // break exactly that, and would bill for it too.
+    expect(outcome.order).toBeNull();
+    expect(outcome.billingEntry).toBeNull();
+    expect(orders.forPatient(alert.patientId).length).toBe(ordersBefore);
+    expect(billing.forPatient(alert.patientId).length).toBe(billingBefore);
+
+    const stored = alerts.byId(alert.id)!;
+    expect(stored.status).toBe('resolved');
+    expect(stored.route).toBe('manual');
+    expect(stored.note).toBe('Ordered on paper at the visit.');
+  }, 300_000);
+
+  it('keeps the clinician’s reason on the record when a gap is declined', async () => {
+    const alert = anyOpenAlert();
+    await closeAlertWithoutAction(alert.id, CLINICIAN_ID, 'declined', 'Patient declined the test.');
+
+    const stored = alerts.byId(alert.id)!;
+    expect(stored.route).toBe('declined');
+    expect(stored.note).toBe('Patient declined the test.');
+    // Visible in the record rather than only in the audit trail, so the next
+    // clinician sees the decision instead of raising the gap again.
+    expect(alerts.closedForPatient(alert.patientId).some((a) => a.id === alert.id)).toBe(true);
+  }, 300_000);
+
+  it('refuses to decline a gap without saying why', async () => {
+    const alert = anyOpenAlert();
+    await expect(
+      closeAlertWithoutAction(alert.id, CLINICIAN_ID, 'declined', '   '),
+    ).rejects.toThrow(/why/i);
+
+    // Refused means unchanged, not half-applied.
+    expect(alerts.byId(alert.id)!.status).toBe('open');
+  }, 300_000);
+
+  it('refuses to close the same gap twice', async () => {
+    const alert = anyOpenAlert();
+    await closeAlertWithoutAction(alert.id, CLINICIAN_ID, 'manual', 'done');
+    await expect(
+      closeAlertWithoutAction(alert.id, CLINICIAN_ID, 'manual', 'done again'),
+    ).rejects.toThrow(/already been closed/i);
+  }, 300_000);
+
+  it('marks the automatic route so the two are tellable apart afterwards', async () => {
+    const alert = anyOpenAlert();
+    await resolveAlert(alert.id, CLINICIAN_ID, { asOf: AS_OF });
+    // An auditor asking "was this work done, or waved through" needs the
+    // record to answer. Closed alone does not.
+    expect(alerts.byId(alert.id)!.route).toBe('automatic');
+  }, 300_000);
 });

@@ -85,6 +85,28 @@ const DESCRIBERS: Record<string, Describer> = {
     };
   },
 
+  /*
+   * Closed by hand rather than by the system. The route and the clinician's own
+   * words go in the summary, not just the detail — the trail is read as a list,
+   * and "declined" is precisely the entry a reviewer needs to see without
+   * expanding a row.
+   */
+  'POST /alerts/:id/close': ({ req, body }) => {
+    const raw = req.body as Record<string, unknown>;
+    const route = String(raw?.['route'] ?? '');
+    const note = String(raw?.['note'] ?? '').trim();
+    const outcome = body as { patientId?: string };
+    return {
+      summary:
+        route === 'declined'
+          ? `Declined a documentation gap for ${nameOf(outcome.patientId)}${note ? ` — “${note}”` : ''}. Nothing was ordered.`
+          : `Closed a documentation gap for ${nameOf(outcome.patientId)} as already done${note ? ` — “${note}”` : ''}. Nothing was ordered.`,
+      entityType: 'documentation_alert',
+      patientId: outcome.patientId ?? null,
+      detail: { route, note },
+    };
+  },
+
   'POST /flags/:id/dismiss': ({ req, body }) => {
     const raw = req.body as Record<string, unknown>;
     const reason = String(raw?.['reason'] ?? '').replace(/_/g, ' ');
@@ -213,6 +235,7 @@ function actionFor(key: string): string {
     'POST /encounters/:id/approve': 'encounter.approved',
     'POST /encounters/:id/amend': 'encounter.amended',
     'POST /alerts/:id/resolve': 'alert.resolved',
+    'POST /alerts/:id/close': 'alert.closed',
     'POST /flags/:id/dismiss': 'flag.dismissed',
     'POST /orders/:id/complete': 'order.completed',
     'POST /population-run': 'population.assessed',

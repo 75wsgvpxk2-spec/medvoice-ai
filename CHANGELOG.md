@@ -5,6 +5,14 @@ Notable changes. Dates are the day the work landed on `main`.
 ## Unreleased
 
 ### Added
+- **Documentation gaps can be closed by hand.** A gap can be true and still not
+  be the system's to action — the test was done at another clinic, the order
+  went in on paper, the patient declined it. Alongside the automatic resolution
+  there are now two manual routes: *I have done this* and *Not applicable*, the
+  second requiring a stated reason. Neither creates an order or a billing entry,
+  because the automatic route's guarantee is that the record reflects real
+  clinical action. How each gap was closed, and the clinician's own words, stay
+  on the record and in the audit trail.
 - **Any model provider.** Anthropic, Google Gemini, OpenAI, or any
   OpenAI-compatible endpoint — Groq, Together, OpenRouter, LiteLLM, local
   Ollama — chosen from presets in Settings. Gemini's free tier means a clinic
@@ -51,6 +59,10 @@ Notable changes. Dates are the day the work landed on `main`.
   display, so text a clinician can read on screen is text they can search for.
 
 ### Fixed
+- Resolving a documentation gap could do nothing at all. The button's click
+  handler was an async arrow with nothing catching it, so any failed request —
+  an expired session most often — left it looking untouched: no dialog, no
+  error, no clue whether it had worked.
 - Agent 2 could report a fabricated medication discrepancy by misusing the
   field-confidence channel. Constrained in the prompt and schema.
 - A trained pronunciation whose heard text was numeric could rewrite a

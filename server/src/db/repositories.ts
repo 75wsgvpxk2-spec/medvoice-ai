@@ -151,6 +151,8 @@ function toAlert(r: Row): DocumentationAlert {
     resolvedAt: (r['resolved_at'] as string | null) ?? null,
     createdAt: r['created_at'] as string,
     gapKey: r['gap_key'] as string,
+    route: (r['resolution_route'] as DocumentationAlert['route']) ?? null,
+    note: (r['resolution_note'] as string | null) ?? null,
   };
 }
 
@@ -769,10 +771,40 @@ export const alerts = {
     return result.changes > 0;
   },
 
-  resolve(alertId: string, clinicianId: string): void {
+  /**
+   * Close an alert, recording which route closed it.
+   *
+   * 'automatic' means the system carried out the resolution; 'manual' means the
+   * clinician had already done it; 'declined' means they judged it should not be
+   * done. All three leave status 'resolved' — the gap is off the working list —
+   * but the route is what lets the record show the difference between work done
+   * and work refused, which an auditor will want and a clinician will need.
+   */
+  close(
+    alertId: string,
+    clinicianId: string,
+    route: NonNullable<DocumentationAlert['route']>,
+    note: string | null = null,
+  ): void {
     db()
-      .prepare("UPDATE documentation_alert SET status = 'resolved', resolved_by = ?, resolved_at = ? WHERE id = ?")
-      .run(clinicianId, now(), alertId);
+      .prepare(
+        `UPDATE documentation_alert
+            SET status = 'resolved', resolved_by = ?, resolved_at = ?,
+                resolution_route = ?, resolution_note = ?
+          WHERE id = ?`,
+      )
+      .run(clinicianId, now(), route, note, alertId);
+  },
+
+  /** Closed gaps, newest first — the record of what was done and what was refused. */
+  closedForPatient(patientId: string): DocumentationAlert[] {
+    return (
+      db()
+        .prepare(
+          "SELECT * FROM documentation_alert WHERE patient_id = ? AND status = 'resolved' ORDER BY resolved_at DESC",
+        )
+        .all(patientId) as Row[]
+    ).map(toAlert);
   },
 
   openCount(patientId: string): number {

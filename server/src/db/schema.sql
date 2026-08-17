@@ -160,7 +160,11 @@ CREATE TABLE IF NOT EXISTS documentation_alert (
   resolved_at  TEXT,
   created_at   TEXT NOT NULL,
   -- A4-4: the same gap is never raised twice for one patient.
-  gap_key      TEXT NOT NULL
+  gap_key      TEXT NOT NULL,
+  -- How it was closed: the system acted, the clinician had already acted, or
+  -- they said it should not be actioned. Null while open.
+  resolution_route TEXT CHECK (resolution_route IN ('automatic','manual','declined')),
+  resolution_note  TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alert_gap_unique ON documentation_alert(patient_id, gap_key);

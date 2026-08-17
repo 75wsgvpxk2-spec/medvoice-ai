@@ -106,6 +106,7 @@ export interface PatientRecord {
   flags: RiskFlag[];
   dismissedFlags: RiskFlag[];
   alerts: DocumentationAlert[];
+  closedAlerts: DocumentationAlert[];
   orders: Order[];
   billing: BillingEntry[];
   observations: Observation[];
@@ -358,6 +359,10 @@ export const api = {
 
   previewResolution: (alertId: string) => request<ResolutionPreview>(`/alerts/${alertId}/preview`),
   resolveAlert: (alertId: string) => post<ResolutionOutcome>(`/alerts/${alertId}/resolve`),
+
+  /** Close a gap the system will not action: already done, or declined. */
+  closeAlert: (alertId: string, route: 'manual' | 'declined', note: string) =>
+    post<ResolutionOutcome>(`/alerts/${alertId}/close`, { route, note }),
   flags: (params: { urgency?: string; search?: string; sort?: string; page?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.urgency) q.set('urgency', params.urgency);

@@ -142,7 +142,7 @@ export async function resolveAlert(
 
   /* ---------------------------------------------------------------- close -- */
 
-  alerts.resolve(alert.id, clinicianId);
+  alerts.close(alert.id, clinicianId, 'automatic');
 
   /* --------------------------------------------------- resolve settled flags -- */
 
@@ -233,3 +233,81 @@ export async function completeOrder(
 }
 
 export { encounters };
+
+/**
+ * Close a documentation gap without the system carrying out the action.
+ *
+ * Two routes reach here. **manual** means the clinician has already done it —
+ * the order went in on paper, the result is in another system, the code was
+ * entered downstream. **declined** means they judge it should not be done for
+ * this patient.
+ *
+ * Neither creates an order, a billing entry or a condition, which is the whole
+ * point: the automatic route's guarantee is that the record reflects real
+ * clinical action, and inventing an order for work done elsewhere would break
+ * exactly that. What both do is the same as the automatic route from the alert
+ * onward — close it, re-assess the patient, re-rank the queue — because the
+ * gap is no longer outstanding either way, and a queue that still ranks the
+ * patient on a gap they have dealt with is wrong in the same way.
+ *
+ * The clinician's reason is stored on the alert rather than only in the audit
+ * trail, so the next person to open the record sees why it was closed without
+ * having to go looking for it.
+ */
+export async function closeAlertWithoutAction(
+  alertId: string,
+  clinicianId: string,
+  route: 'manual' | 'declined',
+  note: string,
+  options: { asOf?: Date } = {},
+): Promise<ResolutionOutcome> {
+  const alert = alerts.byId(alertId);
+  if (!alert) throw new Error('That alert no longer exists.');
+  if (alert.status !== 'open') throw new Error('That alert has already been closed.');
+
+  const trimmed = note.trim();
+  // Declining says a real gap should stay unactioned, so it has to carry a
+  // reason. Recording that a gap was refused with no explanation is barely
+  // better than leaving it open.
+  if (route === 'declined' && trimmed.length === 0) {
+    throw new Error('Say why this gap should not be actioned.');
+  }
+
+  const patient = patients.byId(alert.patientId);
+  if (!patient) throw new Error('That patient no longer exists.');
+
+  const statusBefore = patient.status;
+  const correlationId = id('corr');
+  const timestamp = now();
+
+  alerts.close(alert.id, clinicianId, route, trimmed || null);
+
+  const assessment = await assessPatientRun(alert.patientId, {
+    asOf: options.asOf ?? new Date(),
+    trigger: 'alert_resolution',
+    correlationId,
+    encounterId: alert.encounterId,
+  });
+
+  let statusAfter = assessment.status;
+  if (assessment.flags.length === 0) {
+    patients.setStatus(alert.patientId, 'managed', timestamp);
+    statusAfter = 'managed';
+  }
+
+  rerankQueue(patient.clinicianId);
+
+  return {
+    alertId: alert.id,
+    patientId: alert.patientId,
+    order: null,
+    billingEntry: null,
+    conditionAdded: null,
+    amendmentEncounterId: null,
+    alertClosed: true,
+    statusBefore,
+    statusAfter,
+    activeFlagsAfter: flags.activeForPatient(alert.patientId),
+    flagsResolved: [],
+  };
+}

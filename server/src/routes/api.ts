@@ -38,7 +38,12 @@ import { describeThresholds, isThresholdName } from '../lib/thresholds.ts';
 import { TH, verifyReference } from '../clinical/reference.ts';
 import { auditTrail } from './audit-trail.ts';
 import { submitEncounter, approveEncounter, runPopulation, amendEncounter } from '../orchestration/triggers.ts';
-import { resolveAlert, previewResolution, completeOrder } from '../agents/resolution.ts';
+import {
+  resolveAlert,
+  previewResolution,
+  completeOrder,
+  closeAlertWithoutAction,
+} from '../agents/resolution.ts';
 import { assessPatientRun, fingerprintOf, rerankQueue } from '../agents/clinical-intelligence.ts';
 import { evaluate } from '../clinical/rules.ts';
 import { toFhirBundle, toMarkdown } from '../clinical/report.ts';
@@ -949,6 +954,8 @@ api.get('/patients/:id', requireClinician, (req: AuthedRequest, res) => {
     flags: flags.activeForPatient(patient.id),
     dismissedFlags: flags.dismissedForPatient(patient.id),
     alerts: alerts.openForPatient(patient.id),
+    // FD-3's rule applied to gaps: how a gap was closed stays on the record.
+    closedAlerts: alerts.closedForPatient(patient.id),
     orders: orders.forPatient(patient.id),
     billing: billing.forPatient(patient.id),
     observations: observations.forPatient(patient.id),
@@ -980,6 +987,8 @@ api.get('/patients/:id/report', requireClinician, (req: AuthedRequest, res) => {
     observations: observations.forPatient(patient.id),
     flags: flags.activeForPatient(patient.id),
     alerts: alerts.openForPatient(patient.id),
+    // FD-3's rule applied to gaps: how a gap was closed stays on the record.
+    closedAlerts: alerts.closedForPatient(patient.id),
     orders: orders.forPatient(patient.id),
   };
 
@@ -1073,6 +1082,36 @@ api.post('/alerts/:id/resolve', requireClinician, async (req: AuthedRequest, res
   } catch (error) {
     res.status(400).json({
       error: error instanceof Error ? error.message : 'That alert could not be resolved.',
+    });
+  }
+});
+
+/**
+ * Close a gap the system is not going to action itself.
+ *
+ * Human decision point two takes two more shapes than the build document
+ * anticipated: work already done outside this system, and work a clinician
+ * judges should not be done at all. Both are decisions, not automation, so they
+ * arrive here as an explicit request rather than being inferred.
+ */
+api.post('/alerts/:id/close', requireClinician, async (req: AuthedRequest, res) => {
+  const { route, note } = req.body as { route?: string; note?: string };
+  if (route !== 'manual' && route !== 'declined') {
+    res.status(400).json({ error: 'Say whether this was done already or is being declined.' });
+    return;
+  }
+
+  try {
+    const outcome = await closeAlertWithoutAction(
+      param(req, 'id'),
+      req.clinicianId!,
+      route,
+      String(note ?? '').slice(0, 1000),
+    );
+    res.json({ ...outcome, queue: buildQueue(req.clinicianId!) });
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : 'That alert could not be closed.',
     });
   }
 });

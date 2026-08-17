@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { DismissalReason, Patient, RiskFlag } from '../../../shared/types';
+import type {
+  DeclineReason,
+  DismissalReason,
+  DocumentationAlert,
+  Patient,
+  RiskFlag,
+} from '../../../shared/types';
+import { DECLINE_REASONS } from '../../../shared/types';
 import { api, ApiError, type PatientRecord, type ResolutionPreview, type ResolutionOutcome } from '../api';
 import { StatusMarker, EmptyState, ErrorState, Dialog, UrgencyWord, daysWord } from '../components';
 import { PatientReport } from '../components/Report';
@@ -44,6 +51,17 @@ export function PatientDetail({
   const [dismissNote, setDismissNote] = useState('');
   /* 8.3: only the affected alert shows progress; the rest stays usable (UI-6). */
   const [busyAlertId, setBusyAlertId] = useState<string | null>(null);
+  /* Kept apart from `error`, which replaces the whole record. A resolution that
+     could not be opened should say so beside the alert, not take the patient's
+     chart off the screen. */
+  const [alertError, setAlertError] = useState<string | null>(null);
+  /* The gap being closed by hand, and how. */
+  const [closing, setClosing] = useState<{
+    alert: DocumentationAlert;
+    route: 'manual' | 'declined';
+  } | null>(null);
+  const [closeReason, setCloseReason] = useState<DeclineReason | ''>('');
+  const [closeNote, setCloseNote] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [reporting, setReporting] = useState(false);
 
@@ -72,6 +90,45 @@ export function PatientDetail({
       onChanged();
     } catch (e) {
       setError((e as ApiError).message);
+    } finally {
+      setBusyAlertId(null);
+    }
+  };
+
+  const openClose = (alert: DocumentationAlert, route: 'manual' | 'declined') => {
+    setAlertError(null);
+    setCloseReason('');
+    setCloseNote('');
+    setClosing({ alert, route });
+  };
+
+  /**
+   * Declining needs a stated reason; saying it was already done does not, since
+   * the claim is its own explanation. Both are recorded on the alert either way.
+   */
+  const confirmClose = async () => {
+    if (!closing) return;
+    const declining = closing.route === 'declined';
+    const chosen = DECLINE_REASONS.find((r) => r.value === closeReason);
+    const note =
+      declining && chosen
+        ? chosen.value === 'other'
+          ? closeNote.trim()
+          : `${chosen.label}${closeNote.trim() ? ` — ${closeNote.trim()}` : ''}`
+        : closeNote.trim();
+
+    if (declining && !note) return;
+
+    setBusyAlertId(closing.alert.id);
+    try {
+      const result = await api.closeAlert(closing.alert.id, closing.route, note);
+      setClosing(null);
+      setOutcome(result);
+      load();
+      onChanged();
+    } catch (e) {
+      setAlertError(`Could not close this gap: ${(e as ApiError).message} Nothing has changed.`);
+      setClosing(null);
     } finally {
       setBusyAlertId(null);
     }
@@ -182,26 +239,89 @@ export function PatientDetail({
       {/* Documentation alerts ---------------------------------------------- */}
       <section className="stack">
         <h2>Documentation alerts</h2>
+        {alertError && (
+          <div className="error" role="alert">
+            {alertError}
+          </div>
+        )}
         {record.alerts.length === 0 ? (
           <EmptyState title="No documentation gaps on this record." />
         ) : (
           record.alerts.map((alert) => (
             <div key={alert.id} className="alert stack">
               <div>{alert.description}</div>
-              <div className="action">One tap will: {alert.resolution.description}</div>
-              <div>
+              <div className="action">Resolving will: {alert.resolution.description}</div>
+              <div className="row" style={{ flexWrap: 'wrap', gap: 'var(--gap-2)' }}>
                 <button
                   className="quiet"
                   disabled={busyAlertId !== null}
                   onClick={async () => {
-                    setPreview(await api.previewResolution(alert.id));
+                    /*
+                     * Every failure here used to be swallowed. The handler was
+                     * an async arrow with nothing catching it, so a rejected
+                     * request — an expired session most often — left the button
+                     * looking untouched: no dialog, no error, no clue. A control
+                     * that silently does nothing is worse than one that errors,
+                     * because the clinician cannot tell whether it worked.
+                     */
+                    setAlertError(null);
+                    setBusyAlertId(alert.id);
+                    try {
+                      setPreview(await api.previewResolution(alert.id));
+                    } catch (e) {
+                      setAlertError(
+                        `Could not open this resolution: ${(e as ApiError).message} Nothing on the record has changed.`,
+                      );
+                    } finally {
+                      setBusyAlertId(null);
+                    }
                   }}
                 >
-                  {busyAlertId === alert.id ? 'Resolving…' : 'Resolve'}
+                  {busyAlertId === alert.id ? 'Opening…' : 'Resolve'}
+                </button>
+
+                {/* The two routes the system cannot take for you. A gap can be
+                    real and still not be ours to action — done at another
+                    clinic, ordered on paper, or wrong for this patient. Without
+                    these the list fills with work nobody can clear, and a list
+                    that cannot be cleared stops being read. */}
+                <button className="quiet" disabled={busyAlertId !== null} onClick={() => openClose(alert, 'manual')}>
+                  I have done this
+                </button>
+                <button className="quiet" disabled={busyAlertId !== null} onClick={() => openClose(alert, 'declined')}>
+                  Not applicable
                 </button>
               </div>
             </div>
           ))
+        )}
+
+        {/* The same rule FD-3 sets for dismissed flags: a closed gap and the
+            reason it was closed stay on the record. Otherwise the next
+            clinician sees a clean list and cannot tell whether the work was
+            done, refused, or never raised. */}
+        {record.closedAlerts.length > 0 && (
+          <details className="closed-gaps">
+            <summary>
+              {record.closedAlerts.length} closed{' '}
+              {record.closedAlerts.length === 1 ? 'gap' : 'gaps'}
+            </summary>
+            <div className="stack" style={{ marginTop: 'var(--gap-3)' }}>
+              {record.closedAlerts.map((alert) => (
+                <div key={alert.id} className="dismissed stack">
+                  <div>{alert.description}</div>
+                  <div className="basis">
+                    {alert.route === 'automatic' && 'Resolved by the system'}
+                    {alert.route === 'manual' && 'Done by the clinician outside this system'}
+                    {alert.route === 'declined' && 'Declined — not actioned'}
+                    {!alert.route && 'Closed'}
+                    {alert.resolvedAt && ` on ${new Date(alert.resolvedAt).toLocaleDateString()}`}
+                  </div>
+                  {alert.note && <div className="reasoning">“{alert.note}”</div>}
+                </div>
+              ))}
+            </div>
+          </details>
         )}
       </section>
 
@@ -322,6 +442,83 @@ export function PatientDetail({
               Resolve
             </button>
             <button onClick={() => setPreview(null)}>Cancel</button>
+          </div>
+        </Dialog>
+      )}
+
+      {closing && (
+        <Dialog
+          title={closing.route === 'manual' ? 'Already done' : 'Not applicable'}
+          onClose={() => setClosing(null)}
+        >
+          <p className="reasoning">{closing.alert.description}</p>
+
+          {closing.route === 'manual' ? (
+            <>
+              <p className="hint">
+                This closes the gap and re-assesses the patient. It creates no order and no billing
+                entry — the record should show what was actually done, and the system did not do
+                this one.
+              </p>
+              <label htmlFor="close-note">Where it was done, if you want it on the record</label>
+              <textarea
+                id="close-note"
+                rows={3}
+                value={closeNote}
+                onChange={(e) => setCloseNote(e.target.value)}
+                placeholder="Ordered on paper at the visit; result expected from the district lab."
+              />
+            </>
+          ) : (
+            <>
+              <p className="hint">
+                This records that the gap should not be actioned for this patient. It stays on the
+                record with your reason, so the next person to open the chart can see the decision
+                rather than raise it again.
+              </p>
+              <label htmlFor="close-reason">Why</label>
+              <select
+                id="close-reason"
+                value={closeReason}
+                onChange={(e) => setCloseReason(e.target.value as DeclineReason)}
+              >
+                <option value="">Choose a reason…</option>
+                {DECLINE_REASONS.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+              <label htmlFor="close-note">
+                {closeReason === 'other' ? 'Your reason' : 'Anything to add'}
+              </label>
+              <textarea
+                id="close-note"
+                rows={3}
+                value={closeNote}
+                onChange={(e) => setCloseNote(e.target.value)}
+                placeholder={
+                  closeReason === 'other'
+                    ? 'Describe why this gap should not be actioned.'
+                    : 'Optional.'
+                }
+              />
+            </>
+          )}
+
+          <div className="row" style={{ marginTop: 'var(--gap-4)' }}>
+            <button
+              className="primary"
+              onClick={confirmClose}
+              disabled={
+                busyAlertId !== null ||
+                (closing.route === 'declined' &&
+                  (!closeReason || (closeReason === 'other' && !closeNote.trim())))
+              }
+            >
+              {busyAlertId ? 'Closing…' : 'Close this gap'}
+            </button>
+            <button onClick={() => setClosing(null)}>Cancel</button>
           </div>
         </Dialog>
       )}

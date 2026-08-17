@@ -268,6 +268,31 @@ export type GapType =
 export type AlertStatus = 'open' | 'resolved';
 
 /**
+ * How a documentation gap was closed.
+ *
+ * A gap can be true and still not be the system's to action: the test was done
+ * at another clinic, the order went in on paper, the patient declined it, the
+ * rule does not fit this person. With only the automatic route, every one of
+ * those left the gap open forever, so the list filled with work nobody could
+ * clear and stopped being worth reading — which is how a real gap gets missed.
+ */
+export type ResolutionRoute = 'automatic' | 'manual' | 'declined';
+
+/** Why a clinician says a gap should not be actioned. */
+export type DeclineReason =
+  | 'done_elsewhere'
+  | 'patient_declined'
+  | 'not_clinically_relevant'
+  | 'other';
+
+export const DECLINE_REASONS: Array<{ value: DeclineReason; label: string }> = [
+  { value: 'done_elsewhere', label: 'Already done elsewhere' },
+  { value: 'patient_declined', label: 'Patient declined' },
+  { value: 'not_clinically_relevant', label: 'Not clinically relevant for this patient' },
+  { value: 'other', label: 'Another reason — I will describe it' },
+];
+
+/**
  * Section 5, Agent 4: each resolution action defines exactly what one tap will do, and
  * must be genuinely executable. A4-5 verifies no alert offers a fix that does nothing.
  */
@@ -301,6 +326,10 @@ export interface DocumentationAlert {
   createdAt: string;
   /** Stable identity of the gap, used to avoid duplicating it across encounters (A4-4). */
   gapKey: string;
+  /** How it was closed. Null while still open. */
+  route: ResolutionRoute | null;
+  /** The clinician's own words, required when declining for a reason not listed. */
+  note: string | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -332,6 +332,8 @@ export async function scanPatient(
       resolvedAt: null,
       createdAt: timestamp,
       gapKey: gap.gapKey,
+      route: null,
+      note: null,
     };
 
     // A4-4: the unique index on (patient, gapKey) means the same gap seen again

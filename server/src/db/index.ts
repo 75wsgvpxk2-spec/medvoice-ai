@@ -50,6 +50,11 @@ function migrate(conn: Database.Database): void {
     ['risk_flag', 'dismissal_note', 'TEXT'],
     ['audit_event', 'prev_hash', 'TEXT'],
     ['audit_event', 'hash', 'TEXT'],
+    // Added with the manual close routes. No CHECK here: ALTER TABLE ADD COLUMN
+    // cannot carry one in SQLite, and the route is written only by code that
+    // already constrains it.
+    ['documentation_alert', 'resolution_route', 'TEXT'],
+    ['documentation_alert', 'resolution_note', 'TEXT'],
   ];
   for (const [table, column, definition] of added) {
     const columns = conn.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
