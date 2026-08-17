@@ -114,7 +114,15 @@ function ModelSection({
   const [preset, setPreset] = useState(matched?.id ?? 'anthropic');
   const activePreset = PROVIDER_PRESETS.find((x) => x.id === preset);
 
-  const live = s.provider === 'deterministic' ? false : s.hasApiKey;
+  /*
+   * There is no "when to use it" control any more, and there should not be: the
+   * provider chosen above is always used when it can be, and the local engine
+   * catches whatever falls through — a missing key, an unreachable endpoint, a
+   * rejected request. That left a mode selector whose only real setting was the
+   * one everybody wanted, so the screen reports the resolved engine instead of
+   * asking a clinic to configure it.
+   */
+  const live = view.activeProvider !== 'deterministic';
 
   return (
     <section className="card stack">
@@ -165,25 +173,11 @@ function ModelSection({
             )}
           </p>
         )}
-      </div>
-
-      <div>
-        <label htmlFor="set-provider">When to use it</label>
-        <select
-          id="set-provider"
-          value={s.provider}
-          disabled={saving}
-          onChange={(e) => onSave({ provider: e.target.value as ClinicSettings['provider'] }, 'the engine')}
-        >
-          <option value="auto">Automatic — live when a key is present</option>
-          <option value="anthropic">Always Anthropic</option>
-          <option value="compatible">Always the OpenAI-compatible endpoint</option>
-          <option value="deterministic">Always the local engine</option>
-        </select>
         <p className="hint">
-          The local engine runs the same agents with encoded reasoning instead of a model. It costs
-          nothing, needs no network, and is what the system falls back to if the model is
-          unreachable — whichever provider you choose.
+          This provider is used for every agent call. If it has no key, cannot be reached, or
+          refuses a request, the local engine takes over — it runs the same agents with encoded
+          reasoning instead of a model, costs nothing, and needs no network.
+          {!live && ' No usable key is set, so the local engine is running now.'}
         </p>
       </div>
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Clinician, QueueView, Patient } from '../../shared/types';
-import { api, ApiError, type ApprovalOutcome } from './api';
+import { api, ApiError, onSessionEnded, type ApprovalOutcome } from './api';
 import { useClinicStream } from './lib/stream';
 import { AgentStrip, Dialog } from './components';
 import { Queue } from './screens/Queue';
@@ -34,6 +34,9 @@ type Route =
 export function App() {
   const [clinician, setClinician] = useState<Clinician | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
+  // Why the sign-in screen is showing, when it is showing because of a 401
+  // rather than because nobody has signed in yet.
+  const [sessionNotice, setSessionNotice] = useState<string | null>(null);
   const [route, setRoute] = useState<Route>({ name: 'queue' });
 
   const [queue, setQueue] = useState<QueueView | null>(null);
@@ -90,6 +93,20 @@ export function App() {
       .finally(() => setCheckingSession(false));
   }, []);
 
+  /*
+   * The session can end long after this screen loaded — it expires, it idles
+   * out, the account is deactivated, or the signing key changes. Until this
+   * listener existed the shell stayed up and each screen showed its own error
+   * with a Try again button that could only fail the same way, so the clinician
+   * was stuck looking at a dead application with no route back to sign-in.
+   */
+  useEffect(() =>
+    onSessionEnded((reason) => {
+      setSessionNotice(reason);
+      setClinician(null);
+    }),
+  []);
+
   useEffect(() => {
     if (!clinician) return;
     loadQueue();
@@ -105,7 +122,9 @@ export function App() {
   }, [clinician, loadQueue]);
 
   if (checkingSession) return <div style={{ padding: 'var(--gap-6)' }}>Checking your session…</div>;
-  if (!clinician) return <Login onSignedIn={() => window.location.reload()} />;
+  if (!clinician) {
+    return <Login notice={sessionNotice} onSignedIn={() => window.location.reload()} />;
+  }
 
   // A temporary password has been spoken aloud or written down by the time it
   // gets here. Nothing else is reachable until it has been replaced.

@@ -31,24 +31,80 @@ type ServerMessage =
   | { type: 'Termination'; audio_duration_seconds: number; session_duration_seconds: number }
   | { type: 'Error'; error: string };
 
+/**
+ * How much audio goes in each message.
+ *
+ * The API closes the session with code 3007 if a chunk carries less than 50 ms
+ * or more than 1000 ms of audio. A render quantum is 128 frames — 8 ms at
+ * 16 kHz — so sending one message per quantum is six times too small and the
+ * session dies a second or two after the clinician starts speaking. 100 ms sits
+ * in the middle of the accepted range and is still well under the latency a
+ * person notices while dictating.
+ */
+const CHUNK_MS = 100;
+
 /** The worklet runs on the audio thread; inlined so there is no extra asset. */
 const WORKLET_SOURCE = `
 class PcmWorklet extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    // sampleRate is a global in the worklet scope, and it is the rate the audio
+    // thread is really running at — not the one we asked the AudioContext for.
+    this.size = Math.round(sampleRate * (options.processorOptions.chunkMs / 1000));
+    this.buffer = new Int16Array(this.size);
+    this.filled = 0;
+  }
+
   process(inputs) {
     const channel = inputs[0] && inputs[0][0];
     if (!channel) return true;
-    // Float32 [-1,1] to little-endian signed 16-bit, which is what the API wants.
-    const pcm = new Int16Array(channel.length);
     for (let i = 0; i < channel.length; i += 1) {
+      // Float32 [-1,1] to little-endian signed 16-bit, which is what the API wants.
       const clamped = Math.max(-1, Math.min(1, channel[i]));
-      pcm[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+      this.buffer[this.filled] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+      this.filled += 1;
+      if (this.filled === this.size) {
+        const full = this.buffer;
+        // Transferred, not copied, so the audio thread never waits on the main
+        // one. That also means this buffer is gone and a fresh one is needed.
+        this.port.postMessage(full.buffer, [full.buffer]);
+        this.buffer = new Int16Array(this.size);
+        this.filled = 0;
+      }
     }
-    this.port.postMessage(pcm.buffer, [pcm.buffer]);
     return true;
   }
 }
 registerProcessor('pcm-worklet', PcmWorklet);
 `;
+
+/**
+ * What an unexpected socket close means, in words a clinician can act on.
+ *
+ * The API's own close reasons are written for whoever is integrating it — the
+ * text that came back with 3007 was "See Error message for details" — so the
+ * code is translated here and kept in the message only for a bug report.
+ */
+function closeReason(event: CloseEvent): string {
+  const suffix = ` Your note so far is kept. (code ${event.code})`;
+  switch (event.code) {
+    case 3007:
+      // A bug on our side, not something the clinician can do anything about:
+      // audio was sent in the wrong sized pieces. Named plainly so that if it
+      // ever comes back, it is recognisable rather than mysterious.
+      return `Dictation stopped because audio was sent in the wrong size chunks.${suffix}`;
+    case 3006:
+      return `Dictation stopped after a pause with no sound. Start it again when you are ready.${suffix}`;
+    case 3008:
+      return `Dictation reached its maximum length and stopped.${suffix}`;
+    case 3009:
+      return `Too many dictations are running on this account at once. Try again shortly.${suffix}`;
+    case 1008:
+      return `The transcription service rejected the clinic's key. Check it under Settings.${suffix}`;
+    default:
+      return `Dictation disconnected.${event.reason ? ` ${event.reason}.` : ''}${suffix}`;
+  }
+}
 
 /** Plain-language mapping for the ways this can fail at the desk. */
 function describe(error: unknown): string {
@@ -145,7 +201,9 @@ export function useAssemblyDictation() {
 
       socket.onopen = () => {
         const source = context.createMediaStreamSource(stream);
-        const node = new AudioWorkletNode(context, 'pcm-worklet');
+        const node = new AudioWorkletNode(context, 'pcm-worklet', {
+          processorOptions: { chunkMs: CHUNK_MS },
+        });
         nodeRef.current = node;
         node.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
           if (socket.readyState === WebSocket.OPEN) socket.send(event.data);
@@ -199,7 +257,7 @@ export function useAssemblyDictation() {
       socket.onclose = (event) => {
         // 1000 and 1005 are ordinary closes, including our own Terminate.
         if (![1000, 1005].includes(event.code)) {
-          setError(`Transcription disconnected (${event.code}). Your note so far is kept.`);
+          setError(closeReason(event));
         }
         teardown();
       };

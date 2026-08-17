@@ -57,39 +57,47 @@ export function modelId(): string {
 }
 
 /**
+ * Work out the adapter from what the clinic actually has stored.
+ *
+ * An endpoint is part of that. Picking the Gemini preset used to route Google's
+ * URL through the Anthropic SDK, which fails in a way that looks like a broken
+ * integration rather than a setting — so a base URL that is not Anthropic's
+ * implies the OpenAI-compatible adapter, whatever else is set. A compatible
+ * endpoint may also be local and need no key at all, so the URL alone is enough
+ * to make it usable.
+ */
+function resolveFromStored(): 'anthropic' | 'compatible' | 'deterministic' {
+  const endpoint = baseUrl();
+  if (endpoint && !/(^|\.)anthropic\.com/i.test(endpoint)) return 'compatible';
+  return apiKey() ? 'anthropic' : 'deterministic';
+}
+
+/**
  * Which engine actually serves the next call.
  *
- * 'auto' is the honest default: live when there is a key, deterministic when
- * there is not. Pinning to 'anthropic' without a key would fail every call, so
- * that combination degrades rather than breaks — PF-3 asks for exactly that.
+ * There is one rule now: use the configured provider whenever it can be used,
+ * and fall back to the local engine when it cannot. Settings no longer asks a
+ * clinic to choose between those — it reports which one resulted. Pinning to a
+ * provider without a key would fail every call, so that combination degrades
+ * rather than breaks; PF-3 asks for exactly that.
  */
 export function activeProvider(): 'anthropic' | 'compatible' | 'deterministic' {
   const chosen = read<ClinicSettings['provider']>(KEYS.provider, DEFAULT_SETTINGS.provider);
-  if (chosen === 'deterministic') return 'deterministic';
-
-  // An OpenAI-compatible endpoint may be local and need no key at all, so the
-  // presence of a base URL is what makes it usable — not a credential.
-  if (chosen === 'compatible') {
-    return apiKey() || baseUrl() ? 'compatible' : 'deterministic';
-  }
-
-  if (chosen === 'anthropic') return apiKey() ? 'anthropic' : 'deterministic';
 
   /*
-   * 'auto' means "work out what I have", and an endpoint is part of what the
-   * clinic has. Picking the Gemini preset and leaving the mode on Automatic
-   * used to route Google's URL through the Anthropic SDK, which fails in a way
-   * that looks like a broken integration rather than a setting.
-   *
-   * So: a base URL that is not Anthropic's implies the OpenAI-compatible
-   * adapter, whatever else is set.
+   * A stored 'deterministic' is the old "always the local engine" mode, whose
+   * control no longer exists. Honouring it would strand that installation on
+   * the local engine with nothing left to change it, so it is read as
+   * Automatic. Running without a model is now expressed by storing no key,
+   * which reaches the same place and cannot strand anybody.
    */
-  const endpoint = baseUrl();
-  if (endpoint && !/(^|\.)anthropic\.com/i.test(endpoint)) {
-    return apiKey() || endpoint ? 'compatible' : 'deterministic';
-  }
+  if (chosen === 'deterministic' || chosen === 'auto') return resolveFromStored();
 
-  return apiKey() ? 'anthropic' : 'deterministic';
+  // An explicit choice still has to be usable to be honoured.
+  if (chosen === 'compatible') return apiKey() || baseUrl() ? 'compatible' : 'deterministic';
+  if (chosen === 'anthropic') return apiKey() ? 'anthropic' : 'deterministic';
+
+  return resolveFromStored();
 }
 
 /** The AssemblyAI key. Unlike the model key there is no environment fallback:

@@ -15,6 +15,8 @@ import { activeProvider } from '../server/src/lib/settings.ts';
 import { PROVIDER_PRESETS } from '../shared/types.ts';
 import { summariseSpend } from '../server/src/model/spend.ts';
 import { db } from '../server/src/db/index.ts';
+import { readPaging, pageMeta, takePage } from '../server/src/lib/paging.ts';
+import { api, endsTheSession, onSessionEnded } from '../client/src/api.ts';
 import {
   DEFINITIONS,
   configFor,
@@ -491,6 +493,21 @@ describe('AI usage reporting', () => {
     expect(activeProvider()).toBe('anthropic');
   });
 
+  it('does not strand an installation that pinned the old local-only mode', () => {
+    // Settings used to offer "always the local engine" and no longer does. If
+    // that stored value were still honoured, such an installation would sit on
+    // the local engine with no control left to move it off.
+    settings.put('model.provider', 'deterministic', 'test');
+    settings.put('model.apiKey', 'a-key-that-is-long-enough-000000', 'test');
+    settings.put('model.baseUrl', '', 'test');
+    expect(activeProvider()).toBe('anthropic');
+
+    // Running without a model is now expressed by holding no key, which reaches
+    // the same place the old mode did.
+    settings.remove('model.apiKey');
+    expect(activeProvider()).toBe('deterministic');
+  });
+
   it('attributes every call to one provider, with caching as an overlay', async () => {
     // Needs real calls: an earlier version of this test asserted a three-way
     // partition and passed only because it ran against an empty database.
@@ -506,4 +523,227 @@ describe('AI usage reporting', () => {
     // it as a note rather than a third bar.
     expect(spend.cachedCalls).toBeLessThanOrEqual(spend.totalCalls);
   }, 300_000);
+});
+
+/*
+ * Search has to run over the whole table, not the page already fetched.
+ *
+ * Filtering a fetched slice in the browser looks correct for as long as the
+ * list is short enough to fit in one slice, and then quietly stops finding
+ * things — which is the worst failure mode available, because the screen still
+ * says "no matches" with complete confidence. The run log had exactly this bug
+ * behind a 200-row ceiling.
+ *
+ * These seed their own rows rather than counting on a population run to produce
+ * enough of them: a test that needs thirty rows should make thirty rows.
+ */
+describe('Search reaches the whole list, not the visible page', () => {
+  const PAGE = 5;
+  const ROWS = 30;
+  /** Written first, so it sits on the last page of a newest-first list. */
+  const NEEDLE = 'zzz-needle-correlation';
+
+  beforeAll(() => {
+    freshPopulation();
+    for (let i = 0; i < ROWS; i += 1) {
+      runs.start({
+        agent: 'clinical_intelligence',
+        trigger: 'population_run',
+        correlationId: i === 0 ? NEEDLE : `corr-${i}`,
+        inputSummary: `seeded run ${i}`,
+      });
+      audit.record({
+        actor: CLINICIAN_ID,
+        actorName: 'Test',
+        action: 'settings.update',
+        entityType: 'settings',
+        summary: i === 0 ? `seeded audit ${NEEDLE}` : `seeded audit ${i}`,
+      });
+    }
+  });
+
+  it('finds a run that is nowhere near the first page', () => {
+    const firstPage = runs.page({ page: 1, pageSize: PAGE });
+    expect(firstPage.total).toBeGreaterThanOrEqual(ROWS);
+    expect(firstPage.runs.length).toBe(PAGE);
+
+    // The needle is not on the page we are searching from.
+    expect(firstPage.runs.some((r) => r.correlationId === NEEDLE)).toBe(false);
+
+    const found = runs.page({ search: NEEDLE, page: 1, pageSize: PAGE });
+    expect(found.total).toBe(1);
+    expect(found.runs[0]!.correlationId).toBe(NEEDLE);
+  });
+
+  it('counts matches across every page, not just the one returned', () => {
+    const found = runs.page({ search: 'seeded run', page: 1, pageSize: PAGE });
+
+    // total describes the whole matching set; runs.length is one page of it.
+    expect(found.runs.length).toBe(PAGE);
+    expect(found.total).toBeGreaterThanOrEqual(ROWS);
+
+    // Every page of the match set is reachable, and the last one is not empty.
+    const lastPage = Math.ceil(found.total / PAGE);
+    expect(lastPage).toBeGreaterThan(1);
+    const last = runs.page({ search: 'seeded run', page: lastPage, pageSize: PAGE });
+    expect(last.runs.length).toBeGreaterThan(0);
+    expect(last.total).toBe(found.total);
+  });
+
+  it('never reports a page it cannot fill', () => {
+    /*
+     * Asking for a page past the end has to land on the last real page with
+     * rows on it. Clamping only the number reported back, while the query still
+     * looks past the end, gives "page 4 of 4" above an empty list — which reads
+     * as "there is nothing here" rather than "you overshot".
+     */
+    for (const requested of [1, 2, 99, 1000]) {
+      const runPage = runs.page({ page: requested, pageSize: PAGE });
+      const auditPage = audit.page({ page: requested, pageSize: PAGE });
+      expect(runPage.runs.length, `runs page ${requested}`).toBeGreaterThan(0);
+      expect(auditPage.events.length, `audit page ${requested}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('pages the audit trail the same way', () => {
+    const firstPage = audit.page({ page: 1, pageSize: PAGE });
+    expect(firstPage.total).toBeGreaterThanOrEqual(ROWS);
+    expect(firstPage.events.some((e) => e.summary.includes(NEEDLE))).toBe(false);
+
+    const found = audit.page({ search: NEEDLE, page: 1, pageSize: PAGE });
+    expect(found.total).toBe(1);
+    expect(found.events[0]!.summary).toContain(NEEDLE);
+  });
+});
+
+/*
+ * The pager's own guarantees, tested once for the helper every list screen
+ * shares rather than four times over four route handlers.
+ */
+describe('Paging is consistent across every list', () => {
+  const rows = Array.from({ length: 23 }, (_, i) => `row-${i}`);
+
+  it('walks every row exactly once across the pages', () => {
+    const pageSize = 5;
+    const first = takePage(rows, 1, pageSize);
+    const walked: string[] = [];
+    for (let p = 1; p <= first.totalPages; p += 1) {
+      walked.push(...takePage(rows, p, pageSize).items);
+    }
+
+    // No gaps, no repeats, original order. A pager that drops one row in the
+    // seam between pages hides a patient, and nothing on screen would say so.
+    expect(walked).toEqual(rows);
+    expect(new Set(walked).size).toBe(rows.length);
+    expect(first.totalPages).toBe(5);
+  });
+
+  it('clamps a page past the end instead of showing an empty list', () => {
+    // Narrowing a search while on page four is the ordinary way to reach this.
+    const beyond = takePage(rows, 99, 5);
+    expect(beyond.page).toBe(5);
+    expect(beyond.items).toHaveLength(3);
+    expect(beyond.items[0]).toBe('row-20');
+  });
+
+  it('reports one empty page rather than zero pages for an empty list', () => {
+    // totalPages of 0 makes "page 1 of 0" appear on screen, and any Next button
+    // computed from it behaves oddly.
+    const none = takePage([], 1, 10);
+    expect(none.totalPages).toBe(1);
+    expect(none.total).toBe(0);
+    expect(none.items).toEqual([]);
+  });
+
+  it('refuses absurd page sizes from the query string', () => {
+    expect(readPaging({}, 20)).toEqual({ page: 1, pageSize: 20 });
+
+    // A usable number is clamped into range.
+    expect(readPaging({ pageSize: '100000' }, 20).pageSize).toBe(100);
+    expect(readPaging({ pageSize: '3' }, 20).pageSize).toBe(5);
+    expect(readPaging({ page: '2.7' }, 20).page).toBe(2);
+
+    // Anything that is not a usable number is treated as absent, whatever shape
+    // it arrives in — a query string can carry an array or an object too.
+    for (const junk of ['0', '-10', 'abc', '', ' ', 'NaN', ['2'], {}]) {
+      expect(readPaging({ pageSize: junk }, 20).pageSize, `pageSize=${JSON.stringify(junk)}`).toBe(20);
+      expect(readPaging({ page: junk }, 20).page, `page=${JSON.stringify(junk)}`).toBe(1);
+    }
+  });
+
+  it('describes a page counted in SQL the same way as one sliced in memory', () => {
+    // The two paths have to agree, or the pager reads differently depending on
+    // which screen you are looking at.
+    const sliced = takePage(rows, 3, 5);
+    const counted = pageMeta(rows.length, 3, 5);
+    expect(counted).toEqual({
+      total: sliced.total,
+      page: sliced.page,
+      pageSize: sliced.pageSize,
+      totalPages: sliced.totalPages,
+    });
+  });
+});
+
+/*
+ * An expired session has to send the clinician back to sign-in.
+ *
+ * The bug this pins: the shell decided once, at mount, whether anybody was
+ * signed in. When the session ended later — expiry, idle timeout, a changed
+ * signing key — the shell stayed up and each screen showed its own error with a
+ * Try again button, which could only produce the same 401 again. Nothing on
+ * screen offered a way back to sign-in.
+ */
+describe('A session that ends mid-use returns to sign-in', () => {
+  const protectedPaths = ['/queue', '/flags?page=2', '/patients', '/agent-runs?search=x', '/settings'];
+  const probes = ['/auth/me', '/auth/login', '/auth/status', '/auth/logout'];
+
+  it('treats a 401 on any working call as the end of the session', () => {
+    for (const path of protectedPaths) {
+      expect(endsTheSession(401, path), path).toBe(true);
+    }
+  });
+
+  it('leaves the sign-in calls alone', () => {
+    // /auth/me answering 401 is how the app asks "is anyone signed in" at boot,
+    // and a wrong password is a failed attempt, not an ended session. Treating
+    // either as one shows "your session has ended" to somebody who never had a
+    // session — including on the very first page load of a new installation.
+    for (const path of probes) {
+      expect(endsTheSession(401, path), path).toBe(false);
+      expect(endsTheSession(401, `${path}?next=/queue`), `${path} with a query`).toBe(false);
+    }
+  });
+
+  it('ignores every status that is not a 401', () => {
+    // A 403, a 500 or a validation error are all things a retry might fix.
+    for (const status of [200, 400, 403, 404, 429, 500, 502]) {
+      expect(endsTheSession(status, '/queue'), `status ${status}`).toBe(false);
+    }
+  });
+
+  it('tells the subscriber why, and stops when it unsubscribes', async () => {
+    const heard: string[] = [];
+    const unsubscribe = onSessionEnded((reason) => heard.push(reason));
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: 'Your session has ended. Sign in again to continue.' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+
+    try {
+      await expect(api.queue()).rejects.toThrow(/session has ended/);
+      expect(heard).toEqual(['Your session has ended. Sign in again to continue.']);
+
+      // The reason is passed through rather than replaced, so an idle timeout
+      // says so instead of being flattened into a generic message.
+      unsubscribe();
+      await expect(api.queue()).rejects.toThrow();
+      expect(heard).toHaveLength(1);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
 });

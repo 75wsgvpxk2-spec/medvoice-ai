@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { db, id, now, toJson, fromJson, toBool } from './index.ts';
+import { pageMeta } from '../lib/paging.ts';
 import type {
   Patient,
   PatientStatus,
@@ -903,6 +904,70 @@ export const runs = {
       .run(completedAt, durationMs, outputSummary, outcome, error ?? null, runId);
   },
 
+  /**
+   * One page of the run log, searched across the whole table.
+   *
+   * Searching in the browser over a fetched slice looks identical to searching
+   * properly until the log outgrows the slice — and then it quietly stops
+   * finding things, which is worse than not offering search at all. The filter
+   * belongs where all the rows are.
+   */
+  page(options: {
+    agent?: string;
+    outcome?: string;
+    search?: string;
+    page: number;
+    pageSize: number;
+  }): { runs: AgentRun[]; total: number } {
+    const where: string[] = [];
+    const args: unknown[] = [];
+
+    if (options.agent) {
+      where.push('agent = ?');
+      args.push(options.agent);
+    }
+    if (options.outcome) {
+      where.push('outcome = ?');
+      args.push(options.outcome);
+    }
+    if (options.search) {
+      /*
+       * Every column the run detail puts on screen. Searching a narrower set
+       * than the screen displays produces the strangest possible result — the
+       * clinician is reading the words, typing them in, and being told there
+       * are no matches — so the two lists are kept the same on purpose.
+       */
+      const columns = [
+        'agent',
+        'trigger',
+        'patient_id',
+        'outcome',
+        'correlation_id',
+        'input_summary',
+        'output_summary',
+        'error_message',
+      ];
+      where.push(`(${columns.map((column) => `COALESCE(${column}, '') LIKE ?`).join(' OR ')})`);
+      const like = `%${options.search}%`;
+      args.push(...columns.map(() => like));
+    }
+
+    const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const counted = db().prepare(`SELECT COUNT(*) AS n FROM agent_run ${clause}`).get(...args) as Row;
+    const total = (counted['n'] as number) ?? 0;
+
+    // Counted first so the page can be clamped before it reaches OFFSET.
+    // Clamping only the number reported back produces the worst of both: the
+    // pager says "page 4 of 4" while the query looks past the end and returns
+    // nothing, so the screen shows a valid page with no rows on it.
+    const { page } = pageMeta(total, options.page, options.pageSize);
+    const rows = db()
+      .prepare(`SELECT * FROM agent_run ${clause} ORDER BY started_at DESC, rowid DESC LIMIT ? OFFSET ?`)
+      .all(...args, options.pageSize, (page - 1) * options.pageSize) as Row[];
+
+    return { runs: rows.map(toRun), total };
+  },
+
   recent(limit = 100, agent?: AgentRun['agent']): AgentRun[] {
     const rows = agent
       ? (db()
@@ -1170,10 +1235,13 @@ export const audit = {
       args.push(options.patientId);
     }
     if (options.search) {
-      // Summary and actor cover what people actually look for: a name, or a
-      // phrase they remember from the entry.
-      where.push('(summary LIKE ? OR actor_name LIKE ?)');
-      args.push(`%${options.search}%`, `%${options.search}%`);
+      // Same rule as the run log: search what the row shows. The action is a
+      // visible tag on every entry, so typing one has to find it, even though
+      // the dropdown beside the box filters by it too.
+      const columns = ['summary', 'actor_name', 'action'];
+      where.push(`(${columns.map((column) => `COALESCE(${column}, '') LIKE ?`).join(' OR ')})`);
+      const like = `%${options.search}%`;
+      args.push(...columns.map(() => like));
     }
 
     const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
@@ -1182,10 +1250,11 @@ export const audit = {
       .get(...args) as Row;
     const total = (counted['n'] as number) ?? 0;
 
-    const offset = Math.max(0, (options.page - 1) * options.pageSize);
+    // Clamped against the count before it reaches OFFSET — see runs.page.
+    const { page } = pageMeta(total, options.page, options.pageSize);
     const rows = db()
       .prepare(`SELECT * FROM audit_event ${clause} ORDER BY at DESC, rowid DESC LIMIT ? OFFSET ?`)
-      .all(...args, options.pageSize, offset) as Row[];
+      .all(...args, options.pageSize, (page - 1) * options.pageSize) as Row[];
 
     return { events: rows.map(toAudit), total };
   },

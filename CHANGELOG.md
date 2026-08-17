@@ -42,6 +42,13 @@ Notable changes. Dates are the day the work landed on `main`.
   one clinic share a caseload. See `docs/DEVIATIONS.md` item 2.
 - Model calls fall back to the local engine when the API is unreachable, out of
   credit or rejecting the key, instead of failing the request.
+- Settings no longer asks when to use the model. The chosen provider is used
+  whenever it can be and the local engine catches whatever falls through, so the
+  screen reports which engine resulted instead of asking a clinic to configure
+  it. An installation that had pinned the old local-only mode is read as
+  automatic rather than left with no control to change it.
+- Searching the run log and the audit trail matches every column those screens
+  display, so text a clinician can read on screen is text they can search for.
 
 ### Fixed
 - Agent 2 could report a fabricated medication discrepancy by misusing the
@@ -50,3 +57,24 @@ Notable changes. Dates are the day the work landed on `main`.
   measurement in a note.
 - Sign-out only cleared the browser's cookie; the token stayed valid. Tokens now
   carry a version that sign-out increments.
+- **AssemblyAI dictation died seconds after it started**, with "Transcription
+  disconnected (3007)". The audio worklet sent one render quantum per message —
+  128 frames, 8 ms at 16 kHz — and the API rejects any chunk under 50 ms. Audio
+  is now buffered to 100 ms chunks, computed from the rate the audio thread is
+  really running at rather than the one requested. Close codes are also reported
+  in plain language instead of as a bare number.
+- **An expired session left the application unusable.** The shell decided once,
+  at load, whether anybody was signed in, so a session that ended later — expiry,
+  idle timeout, sign-out in another tab, a changed signing key — left every
+  screen showing "Your session has ended" beside a Try again button that could
+  only produce the same 401. A 401 on any working call now returns the clinician
+  to the sign-in screen with the reason shown. The sign-in calls are exempt, so a
+  first visit is not told a session it never had has ended.
+- Searching the flag board and the run log only looked at the rows already
+  fetched, so a search from page one could not find anything on page three. All
+  four paged screens — patients, flags, the run log and the audit trail — now
+  filter and sort the whole set on the server before taking a page from it.
+- Asking for a page past the end of the run log or the audit trail reported the
+  last page while the query looked beyond it, so the pager read "page 4 of 4"
+  above an empty list. The page is now clamped against the count before it
+  reaches the query.

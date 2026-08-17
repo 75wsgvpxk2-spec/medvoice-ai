@@ -9,7 +9,14 @@ import { AGENT_LABELS } from '../lib/stream';
 
 /* Section 8.1 — login ----------------------------------------------------- */
 
-export function Login({ onSignedIn }: { onSignedIn: () => void }) {
+export function Login({
+  onSignedIn,
+  notice,
+}: {
+  onSignedIn: () => void;
+  /** Why the clinician is back here, when they were signed in a moment ago. */
+  notice?: string | null;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +83,16 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
                 : 'Use the account your clinic issued you.'}
             </p>
           </div>
+
+          {/* The reason the session ended, shown until they type. It is not an
+              error they made, so it does not take the error styling — but it
+              does have to be here, or landing back on sign-in mid-shift looks
+              like the application threw them out for no reason. */}
+          {notice && !error && (
+            <div className="notice" role="status">
+              {notice}
+            </div>
+          )}
 
           {error && <div className="error" role="alert">{error}</div>}
 
@@ -440,50 +457,37 @@ export function AgentActivity({ clinician }: { clinician: Clinician; onBack?: ()
   const [search, setSearch] = useState('');
   const [outcome, setOutcome] = useState('');
   const [page, setPage] = useState(1);
-  const PAGE_SIZE = 25;
-
-  // The run log is small enough to filter in the browser — a few hundred rows,
-  // already fetched. Doing it on the server would add a round trip per
-  // keystroke for no gain at this size.
-  const visible = (runs ?? []).filter((run) => {
-    if (outcome && run.outcome !== outcome) return false;
-    if (!search.trim()) return true;
-    const needle = search.trim().toLowerCase();
-    return [
-      AGENT_LABELS[run.agent] ?? run.agent,
-      run.trigger.replace(/_/g, ' '),
-      run.patientId ?? 'population',
-      run.outcome,
-      run.errorMessage ?? '',
-      run.outputSummary ?? '',
-      run.correlationId,
-    ]
-      .join(' ')
-      .toLowerCase()
-      .includes(needle);
-  });
-
-  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
-  const safePage = Math.min(page, totalPages);
-  const rows = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
 
   // Narrowing the results can leave you on a page that no longer exists.
   useEffect(() => {
     setPage(1);
   }, [search, outcome, filter]);
 
+  const rows = runs ?? [];
+  const narrowed = search !== '' || outcome !== '' || filter !== '';
+
   const load = () => {
     setError(null);
     api
-      .agentRuns(filter || undefined)
+      .agentRuns({ agent: filter || undefined, outcome: outcome || undefined, search: search || undefined, page })
       .then((r) => {
         setRuns(r.runs);
+        setTotal(r.total);
+        setTotalPages(r.totalPages);
         setSpend(r.spend);
         setTransparency(r.transparency);
       })
       .catch((e: ApiError) => setError(e.message));
   };
-  useEffect(load, [filter]);
+
+  useEffect(() => {
+    // Debounced: the search now runs in SQL over the whole log, so a query per
+    // keystroke is a query too many.
+    const timer = window.setTimeout(load, 200);
+    return () => window.clearTimeout(timer);
+  }, [filter, outcome, search, page]);
 
   return (
     <div className="stack">
@@ -505,7 +509,7 @@ export function AgentActivity({ clinician }: { clinician: Clinician; onBack?: ()
 
       <div className="toolbar">
         <input
-          placeholder="Search agent, patient, trigger or error"
+          placeholder="Search agent, patient, trigger, summary or error"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search agent runs"
@@ -546,7 +550,7 @@ export function AgentActivity({ clinician }: { clinician: Clinician; onBack?: ()
 
       {runs && runs.length === 0 && <EmptyState title="No agent has run yet." />}
 
-      {runs && runs.length > 0 && visible.length === 0 && (
+      {runs && rows.length === 0 && narrowed && (
         <EmptyState title="No run matches these filters." />
       )}
 
@@ -687,26 +691,21 @@ export function AgentActivity({ clinician }: { clinician: Clinician; onBack?: ()
         </div>
       )}
 
-      {visible.length > 0 && (
+      {total > 0 && (
         <div className="pager">
           <span className="pager-count tabular">
-            {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, visible.length)} of{' '}
-            {visible.length}
-            {visible.length !== (runs?.length ?? 0) && ` (filtered from ${runs?.length ?? 0})`}
+            {(page - 1) * 25 + 1}–{Math.min(page * 25, total)} of {total.toLocaleString()}
+            {narrowed && ' matching'}
           </span>
           {totalPages > 1 && (
             <span className="row" style={{ gap: 'var(--gap-2)' }}>
-              <button
-                className="quiet"
-                onClick={() => setPage((n) => Math.max(1, n - 1))}
-                disabled={safePage <= 1}
-              >
+              <button className="quiet" onClick={() => setPage((n) => Math.max(1, n - 1))} disabled={page <= 1}>
                 Previous
               </button>
               <button
                 className="quiet"
                 onClick={() => setPage((n) => Math.min(totalPages, n + 1))}
-                disabled={safePage >= totalPages}
+                disabled={page >= totalPages}
               >
                 Next
               </button>

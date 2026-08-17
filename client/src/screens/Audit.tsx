@@ -107,7 +107,7 @@ export function Audit({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
 
       <div className="toolbar">
         <input
-          placeholder="Search the summary or who did it"
+          placeholder="Search the summary, action or who did it"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search the audit trail"

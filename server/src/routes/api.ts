@@ -2,6 +2,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import rateLimit from 'express-rate-limit';
 import { randomBytes } from 'node:crypto';
 import { config } from '../lib/config.ts';
+import { readPaging, pageMeta, takePage } from '../lib/paging.ts';
 import {
   hashPassword,
   isExpired,
@@ -716,8 +717,7 @@ api.get('/patients', requireClinician, (req: AuthedRequest, res) => {
 
   const search = String(req.query['search'] ?? '').trim().toLowerCase();
   const sort = String(req.query['sort'] ?? 'status');
-  const page = Math.max(1, Number(req.query['page'] ?? 1) || 1);
-  const pageSize = Math.min(100, Math.max(5, Number(req.query['pageSize'] ?? 10) || 10));
+  const { page, pageSize } = readPaging(req.query, 10);
 
   const statuses = String(req.query['status'] ?? '')
     .split(',')
@@ -780,19 +780,13 @@ api.get('/patients', requireClinician, (req: AuthedRequest, res) => {
     return (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || a.name.localeCompare(b.name);
   });
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  // A search that shrinks the results below the current page would otherwise
-  // show an empty list with no way back.
-  const safePage = Math.min(page, totalPages);
-  const start = (safePage - 1) * pageSize;
+  // Filtered and sorted above, so the page comes off the whole matching set.
+  const { items, ...meta } = takePage(sorted, page, pageSize);
 
   res.json({
-    patients: sorted.slice(start, start + pageSize),
-    total: sorted.length,
+    patients: items,
+    ...meta,
     totalUnfiltered: all.length,
-    page: safePage,
-    pageSize,
-    totalPages,
     facets: {
       status: statusFacets,
       conditions: conditionFacets,
@@ -1123,9 +1117,50 @@ api.get('/flags', requireClinician, (req: AuthedRequest, res) => {
   const byUrgency: Record<string, number> = { critical: 0, watch: 0, stable: 0 };
   for (const r of rows) byUrgency[r.flag.urgency] = (byUrgency[r.flag.urgency] ?? 0) + 1;
 
+  const urgency = String(req.query['urgency'] ?? '').trim();
+  const search = String(req.query['search'] ?? '').trim().toLowerCase();
+  const sort = String(req.query['sort'] ?? 'urgency');
+  const { page, pageSize } = readPaging(req.query, 20);
+
+  /*
+   * Filter and sort the whole board, then take a page from the result. Doing it
+   * the other way round — paging first — means a search only ever finds what
+   * happened to be on screen, which looks like working search right up until it
+   * misses the flag somebody was looking for.
+   */
+  const matched = rows.filter((r) => {
+    if (urgency && r.flag.urgency !== urgency) return false;
+    if (!search) return true;
+    return [
+      r.patientName,
+      r.flag.reasoning,
+      r.flag.recommendedAction,
+      r.flag.flagType,
+      r.flag.referenceIds.join(' '),
+    ]
+      .join(' ')
+      .toLowerCase()
+      .includes(search);
+  });
+
+  const sorted = [...matched].sort((a, b) => {
+    if (sort === 'patient') return a.patientName.localeCompare(b.patientName);
+    if (sort === 'newest') return b.flag.createdAt.localeCompare(a.flag.createdAt);
+    if (sort === 'oldest') return a.flag.createdAt.localeCompare(b.flag.createdAt);
+    // Urgency, then oldest first within a band: a critical flag raised last week
+    // is more overdue than one raised this morning.
+    return (
+      (URGENCY_RANK[a.flag.urgency] ?? 9) - (URGENCY_RANK[b.flag.urgency] ?? 9) ||
+      a.flag.createdAt.localeCompare(b.flag.createdAt)
+    );
+  });
+
+  const { items, ...meta } = takePage(sorted, page, pageSize);
+
   res.json({
-    flags: rows,
-    total: rows.length,
+    flags: items,
+    ...meta,
+    totalUnfiltered: rows.length,
     byUrgency,
     uncertain: rows.filter((r) => r.flag.confidence === 'uncertain').length,
   });
@@ -1201,7 +1236,10 @@ api.post('/orders/:id/complete', requireClinician, async (req, res) => {
 /* ---------------------------------------------------------- agent activity -- */
 
 api.get('/agent-runs', requireClinician, (req, res) => {
-  const agent = req.query['agent'] as string | undefined;
+  const agent = (req.query['agent'] as string | undefined) || undefined;
+  const outcome = String(req.query['outcome'] ?? '').trim() || undefined;
+  const search = String(req.query['search'] ?? '').trim() || undefined;
+  const { page, pageSize } = readPaging(req.query, 25);
 
   /**
    * What the AI actually did, in the terms a clinician or an auditor would ask.
@@ -1230,8 +1268,13 @@ api.get('/agent-runs', requireClinician, (req, res) => {
     .all() as Array<{ reason: string; calls: number; lastAt: string }>;
   const degraded = degradedRows.reduce((sum, row) => sum + row.calls, 0);
 
+  // Searched across the whole run log rather than a fetched slice: filtering a
+  // page in the browser stops finding things the moment the log outgrows it.
+  const paged = runs.page({ agent, outcome, search, page, pageSize });
+
   res.json({
-    runs: runs.recent(200, agent as never),
+    runs: paged.runs,
+    ...pageMeta(paged.total, page, pageSize),
     spend: summariseSpend(),
     transparency: {
       configuredProvider: runtime.activeProvider(),
@@ -1250,7 +1293,13 @@ api.get('/agent-runs', requireClinician, (req, res) => {
 /* ------------------------------------------------------------- settings -- */
 
 api.get('/settings', requireClinician, (_req, res) => {
-  res.json({ settings: runtime.current(), apiKeySource: runtime.apiKeySource() });
+  res.json({
+    settings: runtime.current(),
+    apiKeySource: runtime.apiKeySource(),
+    // Reported rather than chosen: the clinic picks a provider, and the server
+    // says which engine that actually resolves to right now.
+    activeProvider: runtime.activeProvider(),
+  });
 });
 
 const ALLOWED_UNITS: Record<keyof UnitPreferences, string[]> = {
@@ -1433,7 +1482,13 @@ api.put('/settings', requireClinician, requireAdmin, (req: AuthedRequest, res) =
     detail: { changed },
   });
 
-  res.json({ settings: runtime.current(), apiKeySource: runtime.apiKeySource() });
+  res.json({
+    settings: runtime.current(),
+    apiKeySource: runtime.apiKeySource(),
+    // Reported rather than chosen: the clinic picks a provider, and the server
+    // says which engine that actually resolves to right now.
+    activeProvider: runtime.activeProvider(),
+  });
 });
 
 /* -------------------------------------------------------- pronunciation -- */
@@ -1929,22 +1984,17 @@ api.get('/audit', requireClinician, (req, res) => {
   const action = String(req.query['action'] ?? '').trim() || undefined;
   const patientId = String(req.query['patientId'] ?? '').trim() || undefined;
   const search = String(req.query['search'] ?? '').trim() || undefined;
-  const page = Math.max(1, Number(req.query['page'] ?? 1) || 1);
-  const pageSize = Math.min(200, Math.max(10, Number(req.query['pageSize'] ?? 50) || 50));
+  const { page, pageSize } = readPaging(req.query, 50);
 
   // Paged in SQL rather than in the browser: an audit trail is the one table
   // here that only grows, and a year of a busy clinic is not a page.
   const { events, total } = audit.page({ action, patientId, search, page, pageSize });
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   res.json({
     events,
     actions: audit.actions(),
-    total,
+    ...pageMeta(total, page, pageSize),
     totalUnfiltered: audit.total(),
-    page: Math.min(page, totalPages),
-    pageSize,
-    totalPages,
     // Always over the whole chain, never just the visible page — a break on
     // page nine still means this page cannot be trusted.
     integrity: audit.verify(),

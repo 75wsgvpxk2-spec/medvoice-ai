@@ -32,6 +32,41 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Told once when a signed-in session stops being accepted.
+ *
+ * A 401 after sign-in means the session is over — expired, idle, signed out in
+ * another tab, the account deactivated, or the signing key changed. Retrying
+ * the call can only produce another 401, so an error box with a "Try again"
+ * button leaves the clinician pressing something that cannot work. The app
+ * subscribes here and returns them to the sign-in screen with the reason.
+ *
+ * A subscription rather than a window event so it is typed, and so the rule
+ * below can be tested without a browser.
+ */
+type SessionEndedListener = (reason: string) => void;
+const sessionEndedListeners = new Set<SessionEndedListener>();
+
+export function onSessionEnded(listener: SessionEndedListener): () => void {
+  sessionEndedListeners.add(listener);
+  return () => {
+    sessionEndedListeners.delete(listener);
+  };
+}
+
+/*
+ * The sign-in calls are exempt. `/auth/me` answering 401 is precisely how the
+ * app asks "is anyone signed in" at boot, and a wrong password on `/auth/login`
+ * is a failed attempt rather than an ended session — treating either as one
+ * would show "your session has ended" to somebody who never had a session.
+ */
+const AUTH_PROBES = new Set(['/auth/me', '/auth/login', '/auth/status', '/auth/logout']);
+
+/** Exported for the test that pins which paths end a session and which do not. */
+export function endsTheSession(status: number, path: string): boolean {
+  return status === 401 && !AUTH_PROBES.has(path.split('?')[0] ?? path);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -47,7 +82,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new ApiError(body.error ?? `The request failed (${response.status}).`, response.status);
+    const message = body.error ?? `The request failed (${response.status}).`;
+
+    if (endsTheSession(response.status, path)) {
+      for (const listener of sessionEndedListeners) listener(message);
+    }
+
+    throw new ApiError(message, response.status);
   }
   return (await response.json()) as T;
 }
@@ -139,6 +180,10 @@ export interface FlagRow {
 export interface FlagBoard {
   flags: FlagRow[];
   total: number;
+  totalUnfiltered: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
   byUrgency: Record<string, number>;
   uncertain: number;
 }
@@ -194,6 +239,8 @@ export interface Transparency {
 export interface SettingsView {
   settings: ClinicSettings;
   apiKeySource: 'settings' | 'environment' | 'none';
+  /** Which engine actually serves the next call, as the server resolves it. */
+  activeProvider: 'anthropic' | 'compatible' | 'deterministic';
 }
 
 export interface AuditView {
@@ -311,7 +358,15 @@ export const api = {
 
   previewResolution: (alertId: string) => request<ResolutionPreview>(`/alerts/${alertId}/preview`),
   resolveAlert: (alertId: string) => post<ResolutionOutcome>(`/alerts/${alertId}/resolve`),
-  flags: () => request<FlagBoard>('/flags'),
+  flags: (params: { urgency?: string; search?: string; sort?: string; page?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.urgency) q.set('urgency', params.urgency);
+    if (params.search) q.set('search', params.search);
+    if (params.sort) q.set('sort', params.sort);
+    if (params.page) q.set('page', String(params.page));
+    const suffix = q.toString();
+    return request<FlagBoard>(`/flags${suffix ? `?${suffix}` : ''}`);
+  },
 
   users: () => request<{ users: Clinician[]; me: Clinician }>('/users'),
   createUser: (input: { name: string; credentials: string; email: string; role: string }) =>
@@ -363,8 +418,23 @@ export const api = {
     post<{ dismissed: string; queue: QueueView }>(`/flags/${flagId}/dismiss`, { reason, note }),
   completeOrder: (orderId: string) => post<{ order: Order }>(`/orders/${orderId}/complete`),
 
-  agentRuns: (agent?: string) =>
-    request<{ runs: AgentRun[]; spend: SpendSummary; transparency: Transparency }>(
-      `/agent-runs${agent ? `?agent=${agent}` : ''}`,
-    ),
+  agentRuns: (
+    params: { agent?: string; outcome?: string; search?: string; page?: number } = {},
+  ) => {
+    const q = new URLSearchParams();
+    if (params.agent) q.set('agent', params.agent);
+    if (params.outcome) q.set('outcome', params.outcome);
+    if (params.search) q.set('search', params.search);
+    if (params.page) q.set('page', String(params.page));
+    const suffix = q.toString();
+    return request<{
+      runs: AgentRun[];
+      total: number;
+      page: number;
+      pageSize: number;
+      totalPages: number;
+      spend: SpendSummary;
+      transparency: Transparency;
+    }>(`/agent-runs${suffix ? `?${suffix}` : ''}`);
+  },
 };

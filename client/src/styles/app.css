@@ -857,6 +857,17 @@ button.dictate.listening {
   border-radius: var(--radius-lg);
 }
 
+/* Something the clinician needs to read, but not something they did wrong —
+   a session that timed out is the system's news, not the clinician's mistake,
+   so it deliberately does not borrow the red of .error. */
+.notice {
+  border: 1px solid var(--watch-line);
+  background: var(--watch-ground);
+  color: var(--watch-ink);
+  padding: var(--gap-4);
+  border-radius: var(--radius-lg);
+}
+
 .skeleton-row {
   height: 84px;
   border-radius: var(--radius-lg);

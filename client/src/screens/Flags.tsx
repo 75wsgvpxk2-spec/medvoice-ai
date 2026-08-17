@@ -13,6 +13,13 @@ const DISMISSAL_REASONS: Array<{ value: DismissalReason; label: string }> = [
 type UrgencyFilter = '' | 'critical' | 'watch' | 'stable';
 
 /**
+ * Urgency first by default — this screen exists to answer "what needs me now".
+ * The others are for a clinician who came looking for something specific: a
+ * patient they remember, or the oldest thing nobody has dealt with.
+ */
+type SortKey = 'urgency' | 'patient' | 'newest' | 'oldest';
+
+/**
  * Every open risk flag in one place.
  *
  * The patient record answers "what is going on with this person"; this screen
@@ -27,6 +34,9 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
   const [board, setBoard] = useState<FlagBoard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [urgency, setUrgency] = useState<UrgencyFilter>('');
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<SortKey>('urgency');
+  const [page, setPage] = useState(1);
   const [dismissing, setDismissing] = useState<FlagRow | null>(null);
   const [reason, setReason] = useState<DismissalReason | ''>('');
   const [note, setNote] = useState('');
@@ -35,12 +45,23 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
   const load = () => {
     setError(null);
     api
-      .flags()
+      .flags({ urgency: urgency || undefined, search: search || undefined, sort, page })
       .then(setBoard)
       .catch((e: ApiError) => setError(e.message));
   };
 
-  useEffect(load, []);
+  // Narrowing invalidates the page number.
+  useEffect(() => {
+    setPage(1);
+  }, [urgency, search, sort]);
+
+  useEffect(() => {
+    // Debounced. The server filters and sorts the whole board before paging, so
+    // a search finds a flag on page nine — filtering the visible page instead
+    // looks identical until the day it misses the one somebody wanted.
+    const timer = window.setTimeout(load, 200);
+    return () => window.clearTimeout(timer);
+  }, [urgency, search, sort, page]);
 
   const confirmDismiss = async () => {
     if (!dismissing || !reason) return;
@@ -61,7 +82,8 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
   if (error && !board) return <ErrorState message={error} onRetry={load} />;
   if (!board) return <div className="card">Loading flags…</div>;
 
-  const rows = urgency ? board.flags.filter((r) => r.flag.urgency === urgency) : board.flags;
+  const rows = board.flags;
+  const narrowed = urgency !== '' || search.trim() !== '';
 
   return (
     <div className="stack">
@@ -71,9 +93,11 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
           <div className="sub tabular">
             {board.total === 0
               ? 'Nothing open'
-              : `${board.total} open · ${board.byUrgency['critical'] ?? 0} critical, ${
-                  board.byUrgency['watch'] ?? 0
-                } watch, ${board.byUrgency['stable'] ?? 0} informational`}
+              : narrowed
+                ? `${board.total} of ${board.totalUnfiltered} match`
+                : `${board.total} open · ${board.byUrgency['critical'] ?? 0} critical, ${
+                    board.byUrgency['watch'] ?? 0
+                  } watch, ${board.byUrgency['stable'] ?? 0} informational`}
           </div>
         </div>
         <button className="quiet" onClick={load}>
@@ -84,6 +108,13 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
       {error && <ErrorState message={error} onRetry={load} />}
 
       <div className="toolbar">
+        <input
+          placeholder="Search patient, reasoning or guideline"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search flags"
+          style={{ minWidth: 240, flex: '1 1 240px' }}
+        />
         <select
           value={urgency}
           onChange={(e) => setUrgency(e.target.value as UrgencyFilter)}
@@ -94,22 +125,53 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
           <option value="watch">Watch ({board.byUrgency['watch'] ?? 0})</option>
           <option value="stable">Informational ({board.byUrgency['stable'] ?? 0})</option>
         </select>
-        {board.uncertain > 0 && (
-          <span className="hint">
-            {board.uncertain} flagged as uncertain — no encoded rule covers that picture, so the
-            system says so rather than guessing.
-          </span>
+        <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} aria-label="Sort by">
+          <option value="urgency">Most urgent first</option>
+          <option value="oldest">Longest outstanding</option>
+          <option value="newest">Most recently raised</option>
+          <option value="patient">Patient name</option>
+        </select>
+        {narrowed && (
+          <button
+            className="link"
+            onClick={() => {
+              setSearch('');
+              setUrgency('');
+            }}
+          >
+            Clear
+          </button>
         )}
       </div>
+
+      {board.uncertain > 0 && (
+        <p className="hint">
+          {board.uncertain} flagged as uncertain — no encoded rule covers that picture, so the system
+          says so rather than guessing.
+        </p>
+      )}
 
       {rows.length === 0 && (
         <EmptyState
           title={
-            urgency
-              ? `No open ${urgency === 'stable' ? 'informational' : urgency} flags.`
+            narrowed
+              ? 'No flag matches this search.'
               : 'No open flags. Every risk the agents raised has been dealt with.'
           }
-        />
+        >
+          {narrowed && (
+            <div style={{ marginTop: 'var(--gap-3)' }}>
+              <button
+                onClick={() => {
+                  setSearch('');
+                  setUrgency('');
+                }}
+              >
+                Clear filters
+              </button>
+            </div>
+          )}
+        </EmptyState>
       )}
 
       <div className="stack">
@@ -126,6 +188,30 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
           />
         ))}
       </div>
+
+      {board.total > 0 && (
+        <div className="pager">
+          <span className="pager-count tabular">
+            {(board.page - 1) * board.pageSize + 1}–
+            {Math.min(board.page * board.pageSize, board.total)} of {board.total}
+            {narrowed && ` matching, from ${board.totalUnfiltered}`}
+          </span>
+          {board.totalPages > 1 && (
+            <span className="row" style={{ gap: 'var(--gap-2)' }}>
+              <button className="quiet" onClick={() => setPage((n) => Math.max(1, n - 1))} disabled={board.page <= 1}>
+                Previous
+              </button>
+              <button
+                className="quiet"
+                onClick={() => setPage((n) => Math.min(board.totalPages, n + 1))}
+                disabled={board.page >= board.totalPages}
+              >
+                Next
+              </button>
+            </span>
+          )}
+        </div>
+      )}
 
       {dismissing && (
         <Dialog
