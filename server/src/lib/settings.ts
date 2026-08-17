@@ -63,9 +63,18 @@ export function modelId(): string {
  * there is not. Pinning to 'anthropic' without a key would fail every call, so
  * that combination degrades rather than breaks — PF-3 asks for exactly that.
  */
-export function activeProvider(): 'anthropic' | 'deterministic' {
+export function activeProvider(): 'anthropic' | 'compatible' | 'deterministic' {
   const chosen = read<ClinicSettings['provider']>(KEYS.provider, DEFAULT_SETTINGS.provider);
   if (chosen === 'deterministic') return 'deterministic';
+
+  // An OpenAI-compatible endpoint may be local and need no key at all, so the
+  // presence of a base URL is what makes it usable — not a credential.
+  if (chosen === 'compatible') {
+    return apiKey() || baseUrl() ? 'compatible' : 'deterministic';
+  }
+
+  // 'auto' and 'anthropic' both need a key; without one the local engine
+  // serves, which is the same degradation a clinic with no account gets.
   return apiKey() ? 'anthropic' : 'deterministic';
 }
 

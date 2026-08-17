@@ -1087,6 +1087,7 @@ const DISMISSAL_REASONS: DismissalReason[] = [
   'not_clinically_relevant',
   'already_addressed',
   'disagree_with_assessment',
+  'other',
 ];
 
 /** Human decision point three — the only place a clinician tells the system it is wrong. */
@@ -1131,11 +1132,22 @@ api.get('/flags', requireClinician, (req: AuthedRequest, res) => {
 });
 
 api.post('/flags/:id/dismiss', requireClinician, async (req: AuthedRequest, res) => {
-  const { reason } = req.body as { reason?: DismissalReason };
+  const { reason, note } = req.body as { reason?: DismissalReason; note?: string };
+  const written = String(note ?? '').trim().slice(0, 1000);
 
   if (!reason || !DISMISSAL_REASONS.includes(reason)) {
     res.status(400).json({
-      error: 'Choose a reason for dismissing this flag: not clinically relevant, already addressed, or disagree with the assessment.',
+      error:
+        'Choose a reason for dismissing this flag: not clinically relevant, already addressed, disagree with the assessment, or another reason you describe.',
+    });
+    return;
+  }
+
+  // 'other' without words is a dismissal nobody can interpret later, which is
+  // the thing FD-3 exists to prevent.
+  if (reason === 'other' && written.length < 10) {
+    res.status(400).json({
+      error: 'Describe why you are dismissing this flag, so the reason can be understood later.',
     });
     return;
   }
@@ -1165,7 +1177,7 @@ api.post('/flags/:id/dismiss', requireClinician, async (req: AuthedRequest, res)
   );
   const finding = findings.find((f) => f.flagType === flag.flagType);
 
-  flags.dismiss(flag.id, reason, req.clinicianId!, finding ? fingerprintOf(finding) : 'unknown');
+  flags.dismiss(flag.id, reason, req.clinicianId!, finding ? fingerprintOf(finding) : 'unknown', written);
 
   const assessment = await assessPatientRun(patient.id, {
     trigger: 'flag_dismissal',
@@ -1261,8 +1273,8 @@ api.put('/settings', requireClinician, requireAdmin, (req: AuthedRequest, res) =
   const changed: string[] = [];
 
   if (body.provider !== undefined) {
-    if (!['auto', 'anthropic', 'deterministic'].includes(body.provider)) {
-      res.status(400).json({ error: 'Choose automatic, live model, or the local engine.' });
+    if (!['auto', 'anthropic', 'compatible', 'deterministic'].includes(body.provider)) {
+      res.status(400).json({ error: 'Choose a provider from the list, or the local engine.' });
       return;
     }
     runtime.settingStore.put(runtime.SETTING_KEYS.provider, body.provider, req.clinicianId!);

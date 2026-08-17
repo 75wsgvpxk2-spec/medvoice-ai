@@ -21,6 +21,7 @@ const DISMISSAL_REASONS: Array<{ value: DismissalReason; label: string }> = [
   { value: 'not_clinically_relevant', label: 'Not clinically relevant' },
   { value: 'already_addressed', label: 'Already addressed' },
   { value: 'disagree_with_assessment', label: 'Disagree with the assessment' },
+  { value: 'other', label: 'Another reason — I will describe it' },
 ];
 
 export function PatientDetail({
@@ -40,6 +41,7 @@ export function PatientDetail({
   const [outcome, setOutcome] = useState<ResolutionOutcome | null>(null);
   const [dismissing, setDismissing] = useState<RiskFlag | null>(null);
   const [dismissReason, setDismissReason] = useState<DismissalReason | ''>('');
+  const [dismissNote, setDismissNote] = useState('');
   /* 8.3: only the affected alert shows progress; the rest stays usable (UI-6). */
   const [busyAlertId, setBusyAlertId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -78,7 +80,7 @@ export function PatientDetail({
   const dismiss = async () => {
     if (!dismissing || !dismissReason) return;
     try {
-      await api.dismissFlag(dismissing.id, dismissReason);
+      await api.dismissFlag(dismissing.id, dismissReason, dismissNote.trim());
       setDismissing(null);
       setDismissReason('');
       load();
@@ -165,6 +167,11 @@ export function PatientDetail({
                       flag.dismissalReason}
                     ” on {flag.dismissedAt ? new Date(flag.dismissedAt).toLocaleString() : 'unknown date'}
                   </div>
+                  {/* The clinician's own words, shown with the category rather
+                      than behind it — this is the part that explains the case. */}
+                  {flag.dismissalNote && (
+                    <div className="dismissal-note">“{flag.dismissalNote}”</div>
+                  )}
                 </div>
               ))}
             </div>
@@ -386,8 +393,29 @@ export function PatientDetail({
               </label>
             ))}
           </fieldset>
+
+          {/* Optional against the three categories, required against 'other'.
+              A category nobody can interpret later is no better than no reason,
+              which is what FD-3 is guarding against. */}
+          <div>
+            <label htmlFor="dismiss-note">
+              {dismissReason === 'other' ? 'Describe the reason (required)' : 'Notes (optional)'}
+            </label>
+            <textarea
+              id="dismiss-note"
+              rows={3}
+              value={dismissNote}
+              placeholder="What you saw, or why this does not apply to this patient"
+              onChange={(e) => setDismissNote(e.target.value)}
+            />
+          </div>
+
           <div className="row" style={{ marginTop: 'var(--gap-4)' }}>
-            <button className="primary" onClick={dismiss} disabled={!dismissReason}>
+            <button
+              className="primary"
+              onClick={dismiss}
+              disabled={!dismissReason || (dismissReason === 'other' && dismissNote.trim().length < 10)}
+            >
               Dismiss
             </button>
             <button onClick={() => setDismissing(null)}>Cancel</button>

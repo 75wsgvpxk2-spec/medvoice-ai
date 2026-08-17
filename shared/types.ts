@@ -206,7 +206,14 @@ export type RiskFlagStatus = 'active' | 'resolved' | 'dismissed';
 export type DismissalReason =
   | 'not_clinically_relevant'
   | 'already_addressed'
-  | 'disagree_with_assessment';
+  | 'disagree_with_assessment'
+  /**
+   * The three reasons above cover most dismissals and none of the interesting
+   * ones. 'other' requires a written note — the point of FD-3 is that a
+   * dismissal can be understood later, and a category nobody can interpret is
+   * no better than no reason at all.
+   */
+  | 'other';
 
 export interface RiskFlag {
   id: string;
@@ -225,6 +232,8 @@ export interface RiskFlag {
   createdAt: string;
   status: RiskFlagStatus;
   dismissalReason: DismissalReason | null;
+  /** The clinician's own words. Required when the reason is 'other'. */
+  dismissalNote: string | null;
   dismissedBy: string | null;
   dismissedAt: string | null;
   /**
@@ -553,7 +562,66 @@ export interface QueueView {
 // Settings, audit and voice training
 // ---------------------------------------------------------------------------
 
-export type ModelProvider = 'auto' | 'anthropic' | 'deterministic';
+/**
+ * Where the agents' reasoning is done.
+ *
+ * 'compatible' covers anything speaking the OpenAI chat-completions protocol,
+ * which is most of the field: Google Gemini (via its OpenAI-compatible
+ * endpoint), OpenAI itself, Groq, Together, OpenRouter, a LiteLLM gateway, or a
+ * local Ollama. One adapter rather than one SDK per vendor — a clinic that
+ * cannot get an Anthropic account should not be locked out of the product.
+ */
+export type ModelProvider = 'auto' | 'anthropic' | 'compatible' | 'deterministic';
+
+/** Ready-made settings for the providers most clinics will reach for. */
+export interface ProviderPreset {
+  id: string;
+  label: string;
+  provider: ModelProvider;
+  baseUrl: string;
+  model: string;
+  note: string;
+  keyUrl: string;
+}
+
+export const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: 'anthropic',
+    label: 'Anthropic (Claude)',
+    provider: 'anthropic',
+    baseUrl: '',
+    model: 'claude-opus-5',
+    note: 'What this system was built and tested against. Paid, no free tier.',
+    keyUrl: 'https://console.anthropic.com/settings/keys',
+  },
+  {
+    id: 'gemini',
+    label: 'Google Gemini — free tier',
+    provider: 'compatible',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    model: 'gemini-2.5-flash',
+    note: 'A genuine free tier with no card required, through Gemini\u2019s OpenAI-compatible endpoint. Rate limited, which suits a clinic-sized caseload.',
+    keyUrl: 'https://aistudio.google.com/apikey',
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    provider: 'compatible',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    note: 'Paid. Any OpenAI model that supports structured outputs.',
+    keyUrl: 'https://platform.openai.com/api-keys',
+  },
+  {
+    id: 'local',
+    label: 'Local or self-hosted',
+    provider: 'compatible',
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'llama3.1',
+    note: 'Ollama, LiteLLM, vLLM \u2014 anything OpenAI-compatible. Nothing leaves the building, which is the strongest answer to the data-residency question.',
+    keyUrl: '',
+  },
+];
 
 /**
  * Where dictation is transcribed.

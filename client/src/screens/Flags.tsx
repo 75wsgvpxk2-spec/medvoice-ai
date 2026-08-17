@@ -7,6 +7,7 @@ const DISMISSAL_REASONS: Array<{ value: DismissalReason; label: string }> = [
   { value: 'not_clinically_relevant', label: 'Not clinically relevant' },
   { value: 'already_addressed', label: 'Already addressed' },
   { value: 'disagree_with_assessment', label: 'Disagree with the assessment' },
+  { value: 'other', label: 'Another reason — I will describe it' },
 ];
 
 type UrgencyFilter = '' | 'critical' | 'watch' | 'stable';
@@ -28,6 +29,7 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
   const [urgency, setUrgency] = useState<UrgencyFilter>('');
   const [dismissing, setDismissing] = useState<FlagRow | null>(null);
   const [reason, setReason] = useState<DismissalReason | ''>('');
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = () => {
@@ -44,9 +46,10 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
     if (!dismissing || !reason) return;
     setBusy(true);
     try {
-      await api.dismissFlag(dismissing.flag.id, reason);
+      await api.dismissFlag(dismissing.flag.id, reason, note.trim());
       setDismissing(null);
       setReason('');
+      setNote('');
       load();
     } catch (e) {
       setError((e as ApiError).message);
@@ -118,6 +121,7 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
             onDismiss={() => {
               setDismissing(row);
               setReason('');
+              setNote('');
             }}
           />
         ))}
@@ -144,13 +148,30 @@ export function Flags({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
               ))}
             </select>
           </div>
+          <div>
+            <label htmlFor="flag-dismiss-note">
+              {reason === 'other' ? 'Describe the reason (required)' : 'Notes (optional)'}
+            </label>
+            <textarea
+              id="flag-dismiss-note"
+              rows={3}
+              value={note}
+              placeholder="What you saw, or why this does not apply to this patient"
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </div>
+
           {/* FD-4: the reason is kept, and the flag returns if the picture changes. */}
           <p className="hint">
             The flag and your reason stay on the patient's record. It will resurface only if the
             clinical picture changes materially.
           </p>
           <div className="row">
-            <button className="primary" onClick={confirmDismiss} disabled={!reason || busy}>
+            <button
+              className="primary"
+              onClick={confirmDismiss}
+              disabled={!reason || busy || (reason === 'other' && note.trim().length < 10)}
+            >
               {busy ? 'Dismissing…' : 'Dismiss flag'}
             </button>
             <button onClick={() => setDismissing(null)} disabled={busy}>

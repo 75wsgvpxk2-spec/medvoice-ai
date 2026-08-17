@@ -127,6 +127,7 @@ function toFlag(r: Row): RiskFlag {
     createdAt: r['created_at'] as string,
     status: r['status'] as RiskFlag['status'],
     dismissalReason: (r['dismissal_reason'] as DismissalReason | null) ?? null,
+    dismissalNote: (r['dismissal_note'] as string | null) ?? null,
     dismissedBy: (r['dismissed_by'] as string | null) ?? null,
     dismissedAt: (r['dismissed_at'] as string | null) ?? null,
     confidence: r['confidence'] as RiskFlag['confidence'],
@@ -676,13 +677,19 @@ export const flags = {
       );
   },
 
-  dismiss(flagId: string, reason: DismissalReason, clinicianId: string, fingerprint: string): void {
+  dismiss(
+    flagId: string,
+    reason: DismissalReason,
+    clinicianId: string,
+    fingerprint: string,
+    note = '',
+  ): void {
     db()
       .prepare(
-        `UPDATE risk_flag SET status = 'dismissed', dismissal_reason = ?, dismissed_by = ?,
-           dismissed_at = ?, dismissed_fingerprint = ? WHERE id = ?`,
+        `UPDATE risk_flag SET status = 'dismissed', dismissal_reason = ?, dismissal_note = ?,
+           dismissed_by = ?, dismissed_at = ?, dismissed_fingerprint = ? WHERE id = ?`,
       )
-      .run(reason, clinicianId, now(), fingerprint, flagId);
+      .run(reason, note || null, clinicianId, now(), fingerprint, flagId);
   },
 
   resolve(flagId: string): void {

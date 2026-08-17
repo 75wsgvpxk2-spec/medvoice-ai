@@ -359,8 +359,8 @@ export const api = {
     const suffix = q.toString();
     return request<AuditView>(`/audit${suffix ? `?${suffix}` : ''}`);
   },
-  dismissFlag: (flagId: string, reason: DismissalReason) =>
-    post<{ dismissed: string; queue: QueueView }>(`/flags/${flagId}/dismiss`, { reason }),
+  dismissFlag: (flagId: string, reason: DismissalReason, note = '') =>
+    post<{ dismissed: string; queue: QueueView }>(`/flags/${flagId}/dismiss`, { reason, note }),
   completeOrder: (orderId: string) => post<{ order: Order }>(`/orders/${orderId}/complete`),
 
   agentRuns: (agent?: string) =>

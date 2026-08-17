@@ -5,6 +5,12 @@ Notable changes. Dates are the day the work landed on `main`.
 ## Unreleased
 
 ### Added
+- **Any model provider.** Anthropic, Google Gemini, OpenAI, or any
+  OpenAI-compatible endpoint — Groq, Together, OpenRouter, LiteLLM, local
+  Ollama — chosen from presets in Settings. Gemini's free tier means a clinic
+  with no budget can run the whole system.
+- Free-text notes on flag dismissal, and an "another reason" option that
+  requires one.
 - **Agent automations.** Four toggleable flows that run without a human click:
   overnight population sweep, assess-on-arrival for new patients, weekly
   documentation scan, and a daily recheck of overdue patients. Off by default,

@@ -5,7 +5,7 @@ import type { AgentName } from '../../../shared/types.ts';
 
 export interface SpendRecord {
   agent: AgentName | 'phase0_test';
-  provider: 'anthropic' | 'deterministic';
+  provider: 'anthropic' | 'compatible' | 'deterministic';
   model: string;
   usage: TokenUsage;
   durationMs: number;
@@ -17,6 +17,9 @@ export interface SpendRecord {
 
 /** Every model call, live or deterministic, lands here. Section 11. */
 export function recordCall(record: SpendRecord): number {
+  // Only Anthropic models have a price table here. A compatible provider's
+  // cost is unknown to us — Gemini's free tier is genuinely zero, and guessing
+  // a number for somebody else's billing would be worse than reporting none.
   const cost = record.provider === 'anthropic' ? costUsd(record.model, record.usage) : 0;
 
   db()

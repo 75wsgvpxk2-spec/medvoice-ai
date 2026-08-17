@@ -137,9 +137,22 @@ The thresholds are encoded and testable. The model's job is judgement and
 language, not arithmetic — which is why a wrong model answer degrades the
 wording rather than the safety.
 
-**No key, no problem.** Without an API key the whole system runs on a
-deterministic local engine that exercises every path. It is also the fallback if
-the model is unreachable.
+**Bring your own provider.** Anthropic, Google Gemini, OpenAI, or anything
+speaking the OpenAI chat-completions protocol — Groq, Together, OpenRouter, a
+LiteLLM gateway, a local Ollama. Chosen from a dropdown in Settings, not a fork.
+
+For a clinic without a budget, **Google Gemini has a genuine free tier** with no
+card required: pick it in Settings, take a key from
+[AI Studio](https://aistudio.google.com/apikey), and the whole system runs on
+`gemini-2.5-flash`. Rate limits suit a clinic-sized caseload.
+
+Running the models on your own hardware answers the data-residency question
+outright — with a local endpoint, no patient text leaves the building.
+
+**No key, no problem.** Without one the whole system runs on a deterministic
+local engine that exercises every path. It is also the fallback whenever a
+provider is unreachable, out of credit, or rejecting the key — whichever
+provider you chose.
 
 ### Stack
 

@@ -1,7 +1,17 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { submitEncounter, approveEncounter, runPopulation } from '../server/src/orchestration/triggers.ts';
 import { resolveAlert } from '../server/src/agents/resolution.ts';
-import { patients, alerts, runs, flags, clinicians, audit } from '../server/src/db/repositories.ts';
+import {
+  patients,
+  alerts,
+  runs,
+  flags,
+  clinicians,
+  audit,
+  settings,
+} from '../server/src/db/repositories.ts';
+import { callAgent } from '../server/src/model/provider.ts';
+import { PROVIDER_PRESETS } from '../shared/types.ts';
 import { summariseSpend } from '../server/src/model/spend.ts';
 import { db } from '../server/src/db/index.ts';
 import {
@@ -409,5 +419,54 @@ describe('Agent automations', () => {
     // The property worth testing: a scheduler that dies on its first error
     // looks identical to a working one until the day it matters.
     expect(recovered.outcome).toBe('success');
+  });
+});
+
+describe('Provider flexibility', () => {
+  beforeAll(() => {
+    freshPopulation();
+  });
+
+  const call = () =>
+    callAgent<{ status: string }>({
+      agent: 'phase0_test',
+      system: 'test',
+      user: 'test',
+      schema: { type: 'object', properties: { status: { type: 'string' } } },
+      deterministic: () => ({ status: 'local engine' }),
+    });
+
+  it('falls back to the local engine when an OpenAI-compatible endpoint is unreachable', async () => {
+    settings.put('model.provider', 'compatible', 'test');
+    // Nothing listens here. The SDK wraps this in an APIConnectionError whose
+    // message is only "Connection error." — the ECONNREFUSED is nested in
+    // `cause`, which an earlier version of the fallback missed entirely and so
+    // threw in the clinician's face instead of degrading.
+    settings.put('model.baseUrl', 'http://127.0.0.1:5399/v1', 'test');
+    settings.put('model.apiKey', 'not-a-real-key-000000000000', 'test');
+
+    const result = await call();
+    expect(result.provider).toBe('deterministic');
+    expect(result.degradedReason).toMatch(/could not be reached/i);
+    expect(result.output.status).toBe('local engine');
+  });
+
+  it('falls back the same way on the Anthropic path', async () => {
+    settings.put('model.provider', 'anthropic', 'test');
+    settings.put('model.baseUrl', 'http://127.0.0.1:5399', 'test');
+
+    const result = await call();
+    // One contract, two wire formats: a clinic swapping provider must not be
+    // swapping the safety behaviour too.
+    expect(result.provider).toBe('deterministic');
+    expect(result.degradedReason).toMatch(/could not be reached/i);
+  });
+
+  it('offers a provider with a genuine free tier', () => {
+    // A clinic that cannot get a paid account should still be able to run this.
+    const free = PROVIDER_PRESETS.find((p) => p.id === 'gemini');
+    expect(free?.provider).toBe('compatible');
+    expect(free?.baseUrl).toContain('generativelanguage.googleapis.com');
+    expect(free?.keyUrl).toBeTruthy();
   });
 });

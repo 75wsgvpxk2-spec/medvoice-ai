@@ -47,6 +47,7 @@ function migrate(conn: Database.Database): void {
     ['clinician', 'must_change_password', 'INTEGER NOT NULL DEFAULT 0'],
     ['clinician', 'created_at', 'TEXT'],
     ['clinician', 'last_sign_in_at', 'TEXT'],
+    ['risk_flag', 'dismissal_note', 'TEXT'],
     ['audit_event', 'prev_hash', 'TEXT'],
     ['audit_event', 'hash', 'TEXT'],
   ];

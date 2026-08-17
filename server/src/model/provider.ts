@@ -4,6 +4,7 @@ import { db, id, now } from '../db/index.ts';
 import * as settings from '../lib/settings.ts';
 import { config } from '../lib/config.ts';
 import { recordCall } from './spend.ts';
+import { callCompatible } from './compatible.ts';
 import type { AgentName } from '../../../shared/types.ts';
 
 /**
@@ -48,7 +49,7 @@ export interface AgentCallOptions<T> {
 
 export interface AgentCallResult<T> {
   output: T;
-  provider: 'anthropic' | 'deterministic';
+  provider: 'anthropic' | 'compatible' | 'deterministic';
   cached: boolean;
   durationMs: number;
   costUsd: number;
@@ -210,6 +211,52 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
     };
   };
 
+  /*
+   * The OpenAI-compatible path. Everything after the call is identical — the
+   * same JSON parse, the same spend record, the same fallback — because the
+   * difference between providers is a wire format, not a contract.
+   */
+  if (settings.activeProvider() === 'compatible') {
+    let result: Awaited<ReturnType<typeof callCompatible>>;
+    try {
+      result = await callCompatible({
+        system: options.system,
+        user: options.user,
+        schema: options.schema,
+        maxTokens: options.maxTokens,
+        timeoutMs: options.timeoutMs,
+      });
+    } catch (error) {
+      const reason = unavailableReason(error);
+      if (reason) return degrade(reason);
+      throw error;
+    }
+
+    let output: T;
+    try {
+      output = JSON.parse(result.text) as T;
+    } catch {
+      throw new ModelOutputError('The model returned output that was not valid JSON.');
+    }
+
+    const durationMs = Date.now() - startedAt;
+    const costUsd = recordCall({
+      agent: options.agent,
+      provider: 'compatible',
+      model: settings.modelId(),
+      usage: {
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+      durationMs,
+      cached: false,
+    });
+    if (options.cacheKey) writeCache(options.cacheKey, options.agent, output);
+    return { output, provider: 'compatible', cached: false, durationMs, costUsd };
+  }
+
   let response: Anthropic.Message;
   try {
     response = await anthropic().messages.create(
@@ -282,7 +329,7 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
 /** Phase 0 gate: a test model call returns and spend is logged. */
 export async function phase0TestCall(): Promise<{
   ok: boolean;
-  provider: 'anthropic' | 'deterministic';
+  provider: 'anthropic' | 'compatible' | 'deterministic';
   reply: string;
   durationMs: number;
   costUsd: number;
@@ -333,8 +380,32 @@ export { id as newId };
  */
 function unavailableReason(error: unknown): string | null {
   const status = (error as { status?: number })?.status;
-  const message = error instanceof Error ? error.message : String(error);
 
+  /*
+   * The SDKs wrap a network failure in an APIConnectionError whose message is
+   * only "Connection error." — the ECONNREFUSED that says what actually
+   * happened is nested in `cause`, sometimes two levels down inside an
+   * AggregateError. Flattening the chain is the difference between falling back
+   * to the local engine and throwing in the clinician's face.
+   */
+  const chain: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    const e = current as { name?: string; message?: string; code?: string; cause?: unknown; errors?: unknown[] };
+    chain.push(e.name ?? '', e.message ?? '', e.code ?? '');
+    if (Array.isArray(e.errors)) {
+      for (const inner of e.errors) {
+        const i = inner as { message?: string; code?: string };
+        chain.push(i.message ?? '', i.code ?? '');
+      }
+    }
+    current = e.cause;
+  }
+  const message = chain.filter(Boolean).join(' | ');
+
+  if (/APIConnectionError|APIConnectionTimeoutError/i.test(message)) {
+    return 'the API could not be reached';
+  }
   if (status === 401 || status === 403) return 'the API key was rejected';
   // An exhausted balance comes back as a 400, not a payment status, so the
   // message is the only thing separating it from a genuinely malformed request

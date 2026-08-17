@@ -86,13 +86,21 @@ const DESCRIBERS: Record<string, Describer> = {
   },
 
   'POST /flags/:id/dismiss': ({ req, body }) => {
-    const reason = String((req.body as Record<string, unknown>)?.['reason'] ?? '').replace(/_/g, ' ');
+    const raw = req.body as Record<string, unknown>;
+    const reason = String(raw?.['reason'] ?? '').replace(/_/g, ' ');
+    const note = String(raw?.['note'] ?? '').trim();
     const flag = (body as { flag?: { patientId?: string; reasoning?: string } }).flag;
     return {
-      summary: `Dismissed a risk flag for ${nameOf(flag?.patientId)} as “${reason}”. It stays on the record and returns if the picture changes.`,
+      // The clinician's own words go in the summary, not just the detail: the
+      // audit trail is read as a list, and a note nobody sees without expanding
+      // a row may as well not have been written.
+      summary:
+        `Dismissed a risk flag for ${nameOf(flag?.patientId)} as “${reason}”` +
+        (note ? ` — “${note}”` : '') +
+        '. It stays on the record and returns if the picture changes.',
       entityType: 'risk_flag',
       patientId: flag?.patientId ?? null,
-      detail: { reason, reasoning: flag?.reasoning },
+      detail: { reason, note, reasoning: flag?.reasoning },
     };
   },
 

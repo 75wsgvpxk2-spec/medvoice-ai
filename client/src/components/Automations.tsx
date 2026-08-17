@@ -8,10 +8,14 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 /**
  * Agent automations — the work the system does without being asked.
  *
- * The statement at the foot of this panel is not boilerplate. Everything here
- * assesses, scans and ranks; approving a note, acting on a flag and resolving an
- * alert stay with the clinician. Somebody deciding whether to switch these on
- * needs to know where the line is before they do, not after.
+ * Collapsed by default: this is configuration, and the run log below it is what
+ * the page is opened to read. The summary still reports whether anything is
+ * running on its own, so the one fact worth knowing survives the collapse.
+ *
+ * Everything here assesses, scans and ranks. Approving a note, acting on a flag
+ * and resolving an alert remain the clinician's — enforced by which triggers
+ * automations.ts is allowed to call, and asserted in the test suite, rather than
+ * by a notice on this screen.
  */
 export function Automations({ clinician }: { clinician: Clinician }) {
   const [items, setItems] = useState<AutomationView[] | null>(null);
@@ -56,13 +60,21 @@ export function Automations({ clinician }: { clinician: Clinician }) {
   const overBudget = spend ? !spend.reserveIntact : false;
 
   return (
-    <section className="card stack">
-      <div className="spread">
-        <h2>Automations</h2>
-        <span className={`pill ${enabled > 0 ? 'pill-live' : ''}`}>
-          {enabled === 0 ? 'All off' : `${enabled} running on their own`}
+    <details className="card details-card">
+      {/* Collapsed by default: this is configuration, and the run log below is
+          what the page is opened to read. Shut, the summary still says whether
+          anything is running on its own, which is the fact worth surfacing. */}
+      <summary>
+        <span>Automations</span>
+        <span className="summary-peek">
+          <span className={`pill ${enabled > 0 ? 'pill-live' : ''}`}>
+            {enabled === 0 ? 'All off' : `${enabled} running on their own`}
+          </span>
+          {overBudget && <span className="pill pill-warn">Paused by budget</span>}
         </span>
-      </div>
+      </summary>
+
+      <div className="details-body stack">
       <p className="hint">
         Work the system does without being asked. Each one appears in the run log below and in the
         audit trail, recorded against the system rather than a person.
@@ -163,13 +175,7 @@ export function Automations({ clinician }: { clinician: Clinician }) {
           </div>
         ))}
       </div>
-
-      {/* The line that makes the rest of this acceptable. */}
-      <div className="automation-boundary">
-        <strong>Never automated.</strong> Approving a note, acting on a risk flag, and resolving a
-        documentation alert are the clinician's, always. Automations assess, scan and rank — they do
-        not decide, order, prescribe or write to a patient's record.
       </div>
-    </section>
+    </details>
   );
 }

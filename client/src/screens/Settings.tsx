@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Clinician, ClinicSettings, Pronunciation, UnitPreferences } from '../../../shared/types';
+import { PROVIDER_PRESETS } from '../../../shared/types';
 import { api, ApiError, type SettingsView, type ThresholdRow } from '../api';
 import { ErrorState, EmptyState } from '../components';
 import { useDictation } from '../lib/speech';
@@ -106,6 +107,12 @@ function ModelSection({
   const [key, setKey] = useState('');
   const [model, setModel] = useState(s.model);
   const [baseUrl, setBaseUrl] = useState(s.baseUrl);
+  // Matched on the endpoint, since that is what actually distinguishes them.
+  const matched = PROVIDER_PRESETS.find(
+    (x) => x.provider === s.provider && x.baseUrl === s.baseUrl,
+  );
+  const [preset, setPreset] = useState(matched?.id ?? 'anthropic');
+  const activePreset = PROVIDER_PRESETS.find((x) => x.id === preset);
 
   const live = s.provider === 'deterministic' ? false : s.hasApiKey;
 
@@ -118,8 +125,50 @@ function ModelSection({
         </span>
       </div>
 
+      {/* Presets first: the point of provider flexibility is that a clinic
+          which cannot get one account is not locked out of the product. */}
       <div>
-        <label htmlFor="set-provider">Which engine answers</label>
+        <label htmlFor="set-preset">Provider</label>
+        <select
+          id="set-preset"
+          value={preset}
+          disabled={saving}
+          onChange={(e) => {
+            const chosen = PROVIDER_PRESETS.find((x) => x.id === e.target.value);
+            if (!chosen) return;
+            setPreset(chosen.id);
+            setModel(chosen.model);
+            setBaseUrl(chosen.baseUrl);
+            onSave(
+              { provider: chosen.provider, model: chosen.model, baseUrl: chosen.baseUrl },
+              `the provider to ${chosen.label}`,
+            );
+          }}
+        >
+          {PROVIDER_PRESETS.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.label}
+            </option>
+          ))}
+        </select>
+        {activePreset && (
+          <p className="hint">
+            {activePreset.note}
+            {activePreset.keyUrl && (
+              <>
+                {' '}
+                <a href={activePreset.keyUrl} target="_blank" rel="noreferrer noopener">
+                  Get a key
+                </a>
+                .
+              </>
+            )}
+          </p>
+        )}
+      </div>
+
+      <div>
+        <label htmlFor="set-provider">When to use it</label>
         <select
           id="set-provider"
           value={s.provider}
@@ -127,13 +176,14 @@ function ModelSection({
           onChange={(e) => onSave({ provider: e.target.value as ClinicSettings['provider'] }, 'the engine')}
         >
           <option value="auto">Automatic — live when a key is present</option>
-          <option value="anthropic">Always the live model</option>
+          <option value="anthropic">Always Anthropic</option>
+          <option value="compatible">Always the OpenAI-compatible endpoint</option>
           <option value="deterministic">Always the local engine</option>
         </select>
         <p className="hint">
           The local engine runs the same agents with encoded reasoning instead of a model. It costs
           nothing, needs no network, and is what the system falls back to if the model is
-          unreachable.
+          unreachable — whichever provider you choose.
         </p>
       </div>
 

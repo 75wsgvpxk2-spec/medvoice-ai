@@ -2265,3 +2265,12 @@ tbody tr:hover { background: var(--brand-wash); }
   font-size: var(--text-sm);
   color: var(--ink-secondary);
 }
+
+.dismissal-note {
+  margin-top: var(--gap-2);
+  padding-left: var(--gap-3);
+  border-left: 2px solid var(--line-strong);
+  font-family: var(--font-clinical);
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+}

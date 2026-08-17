@@ -213,6 +213,7 @@ export async function assessPatient(
       createdAt: timestamp,
       status: 'active',
       dismissalReason: null,
+    dismissalNote: null,
       dismissedBy: null,
       dismissedAt: null,
       confidence: finding.confidence,
