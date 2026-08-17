@@ -75,9 +75,20 @@ design: `client/src/lib/speech.ts` produces plain text and hands it to the same
 submit path a typed note uses. Agents 2, 3 and 4 are untouched, and Agent 1
 never learns how the words arrived.
 
-**Not verified:** microphone capture is blocked in the automated browser used
-for this build, so the interface, controls and error states were checked but a
-live transcription was not. Needs a pass on real hardware.
+**Verified on real hardware.** Microphone capture is blocked in the automated
+browser used for this build, so the interface, controls and error states were
+checked there, and a live dictation was run separately by the product owner on
+a real microphone. That pass is what caught the chunk-size defect below; both
+were fixed and dictation was confirmed working end to end afterwards.
+
+One defect only a live run could find: the audio worklet posted one render
+quantum per message — 128 frames, 8 ms at 16 kHz — and AssemblyAI closes a
+session with code 3007 for any chunk under 50 ms, so dictation died a second or
+two after the clinician started speaking. Audio is now buffered into 100 ms
+chunks, sized from the rate the audio thread actually runs at rather than the
+rate requested, since a browser may ignore the request. The lesson generalises:
+an integration can be correct in every part the automated harness can reach and
+still fail on the one link it cannot.
 
 **Privacy, addressed but not closed:** browser speech recognition is not
 on-device. On Chrome, audio is sent to a Google service with no agreement
