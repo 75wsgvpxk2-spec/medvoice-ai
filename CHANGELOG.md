@@ -62,6 +62,16 @@ Notable changes. Dates are the day the work landed on `main`.
   display, so text a clinician can read on screen is text they can search for.
 
 ### Fixed
+- **Agents finished too fast to see.** A population assessment served from the
+  cache completes in about fifty milliseconds, so the started and finished
+  events landed in the same frame: the activity strip showed idle, then idle
+  again, and work that had been done was indistinguishable from work that had
+  not. A lane now stays visibly working for a moment before settling. Failures
+  are never held back.
+- The two agent cards on the encounter screen rendered as tall empty boxes.
+  They reused the activity strip's `.lane`, whose `flex: 1 1 220px` sizes a
+  *width* in the strip's horizontal row but a *height* inside the encounter
+  screen's vertical stack — 220px each, with one line of text at the top.
 - Resolving a documentation gap could do nothing at all. The button's click
   handler was an async arrow with nothing catching it, so any failed request —
   an expired session most often — left it looking untouched: no dialog, no

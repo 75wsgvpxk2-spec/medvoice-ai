@@ -545,6 +545,8 @@ section > h2 {
 .queue-row.arrived { animation: arrive 1600ms ease-out 1; }
 
 @media (prefers-reduced-motion: reduce) {
+  .agent-track::after { animation: none; background: var(--brand); width: 100%; opacity: 0.5; }
+  .lane.running { animation: none; }
   .queue-row.moved-instantly { box-shadow: inset 4px 0 0 var(--brand-deep), var(--shadow); }
 }
 
@@ -601,6 +603,52 @@ section > h2 {
   white-space: nowrap;
 }
 
+/*
+ * The same agent card, stacked vertically on the encounter screen.
+ *
+ * `.lane` is sized for the strip's horizontal row, where `flex: 1 1 220px`
+ * means "220px wide, share the leftover". Reused inside a vertical stack that
+ * basis becomes a *height*, which is why these cards rendered as tall empty
+ * boxes with a line of text stranded at the top.
+ */
+.agent-step {
+  flex: 0 0 auto;
+  display: grid;
+  gap: var(--gap-1);
+}
+
+/*
+ * Work in progress, shown rather than asserted.
+ *
+ * A dot that breathes says "something is happening" but not "this is running" —
+ * the two read the same when the agent is finished. A track that sweeps only
+ * while running, and is removed the moment it is not, is unambiguous, and it
+ * gives a fast agent something to show: an assessment served from cache can be
+ * over in 50ms, which is otherwise invisible.
+ */
+.agent-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--brand-line);
+  overflow: hidden;
+  position: relative;
+}
+
+.agent-track::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--brand), transparent);
+  animation: sweep 1150ms ease-in-out infinite;
+}
+
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(350%); }
+}
+
 /* A working agent is brand-coloured, not urgency-coloured: "busy" is not a
    clinical statement. */
 .lane.running {
@@ -609,6 +657,21 @@ section > h2 {
 }
 
 .lane.running .agent-name { color: var(--brand-deep); }
+
+/* Enough motion on the strip to catch the eye from across a desk, without
+   becoming the thing you look at while reading a chart. */
+.lane.running {
+  animation: lane-breathe 1800ms ease-in-out infinite;
+}
+
+@keyframes lane-breathe {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(37 99 235 / 0%); }
+  50%      { box-shadow: 0 0 0 3px rgb(37 99 235 / 10%); }
+}
+
+/* A finished lane holds its result briefly rather than snapping to plain —
+   the tick is the confirmation that the work landed. */
+.lane.settled .agent-name { color: var(--managed); }
 
 .lane.failed {
   border-color: var(--critical-line);

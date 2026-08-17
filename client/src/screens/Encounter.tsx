@@ -271,7 +271,10 @@ function AgentProgress({
   detail: string;
 }) {
   return (
-    <div className="lane" style={{ opacity: state === 'waiting' ? 0.55 : 1 }}>
+    <div
+      className={`lane agent-step ${state === 'working' ? 'running' : ''}`}
+      style={{ opacity: state === 'waiting' ? 0.55 : 1 }}
+    >
       <div className="agent-name">
         {state === 'working' && <span className="pulse" aria-hidden="true" />}
         {name}
@@ -280,6 +283,9 @@ function AgentProgress({
       <div className="agent-detail" style={{ whiteSpace: 'normal' }}>
         {detail}
       </div>
+      {/* Only while running. A progress track that stays put once the work is
+          done says the opposite of what it means. */}
+      {state === 'working' && <div className="agent-track" aria-hidden="true" />}
     </div>
   );
 }

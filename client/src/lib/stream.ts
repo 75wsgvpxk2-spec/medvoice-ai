@@ -39,6 +39,21 @@ export const AGENT_LABELS: Record<AgentName, string> = {
   documentation_and_compliance: 'Documentation and Compliance',
 };
 
+/**
+ * How long a lane stays visibly "working" before it is allowed to settle.
+ *
+ * Agents are often faster than a person can see. A population assessment served
+ * from the agent cache finishes in about fifty milliseconds, so the started and
+ * finished events land in the same frame: the strip renders idle, then idle
+ * again, and the clinician who just pressed the button watches nothing happen
+ * and concludes it is broken. Holding the running state briefly is the
+ * difference between work that was invisible and work that was not done, which
+ * are otherwise indistinguishable from the outside.
+ *
+ * It delays only the display. The result itself is already in hand.
+ */
+const MIN_VISIBLE_MS = 900;
+
 export function useClinicStream(onQueueChanged: () => void): {
   lanes: AgentLane[];
   connected: boolean;
@@ -47,6 +62,9 @@ export function useClinicStream(onQueueChanged: () => void): {
   const [connected, setConnected] = useState(false);
   const queueChanged = useRef(onQueueChanged);
   queueChanged.current = onQueueChanged;
+  /** When each lane started, so a fast finish can be held back. */
+  const startedAt = useRef<Map<string, number>>(new Map());
+  const timers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   useEffect(() => {
     const source = new EventSource('/api/stream');
@@ -57,7 +75,10 @@ export function useClinicStream(onQueueChanged: () => void): {
     source.onmessage = (message) => {
       const event = JSON.parse(message.data as string) as StreamEvent;
 
+      const key = `${event.agent}-${event.correlationId}`;
+
       if (event.type === 'agent_started' && event.agent) {
+        startedAt.current.set(key, Date.now());
         setLanes((current) => [
           ...current.filter((l) => !(l.agent === event.agent && l.correlationId === event.correlationId)),
           {
@@ -72,18 +93,35 @@ export function useClinicStream(onQueueChanged: () => void): {
       }
 
       if (event.type === 'agent_finished' && event.agent) {
-        setLanes((current) =>
-          current.map((lane) =>
-            lane.agent === event.agent && lane.correlationId === event.correlationId
-              ? {
-                  ...lane,
-                  state: event.outcome === 'failure' ? 'failure' : 'success',
-                  summary: event.summary ?? '',
-                  durationMs: event.durationMs ?? null,
-                }
-              : lane,
-          ),
-        );
+        const settle = () =>
+          setLanes((current) =>
+            current.map((lane) =>
+              lane.agent === event.agent && lane.correlationId === event.correlationId
+                ? {
+                    ...lane,
+                    state: event.outcome === 'failure' ? 'failure' : 'success',
+                    summary: event.summary ?? '',
+                    durationMs: event.durationMs ?? null,
+                  }
+                : lane,
+            ),
+          );
+
+        const began = startedAt.current.get(key);
+        const elapsed = began === undefined ? MIN_VISIBLE_MS : Date.now() - began;
+        startedAt.current.delete(key);
+
+        // A failure is never held back. Something that went wrong should appear
+        // the instant it is known, whatever it does to the animation.
+        if (elapsed >= MIN_VISIBLE_MS || event.outcome === 'failure') {
+          settle();
+        } else {
+          const timer = setTimeout(() => {
+            timers.current.delete(timer);
+            settle();
+          }, MIN_VISIBLE_MS - elapsed);
+          timers.current.add(timer);
+        }
       }
 
       if (event.type === 'queue_updated' || event.type === 'population_run_finished') {
@@ -91,7 +129,12 @@ export function useClinicStream(onQueueChanged: () => void): {
       }
     };
 
-    return () => source.close();
+    return () => {
+      source.close();
+      // Nothing should try to set state on a screen that has gone.
+      for (const timer of timers.current) clearTimeout(timer);
+      timers.current.clear();
+    };
   }, []);
 
   return { lanes, connected };

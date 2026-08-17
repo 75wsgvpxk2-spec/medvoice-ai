@@ -93,6 +93,7 @@ export function AgentStrip({
                 {lane.state === 'success' && `${lane.summary}${lane.durationMs ? ` · ${lane.durationMs}ms` : ''}`}
                 {lane.state === 'failure' && `failed — ${lane.summary}`}
               </div>
+              {lane.state === 'running' && <div className="agent-track" aria-hidden="true" />}
             </div>
           ))
         )}
