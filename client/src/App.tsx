@@ -378,10 +378,11 @@ export function App() {
           <Audit onOpenPatient={(patientId) => setRoute({ name: 'patient', patientId })} />
         )}
 
-        {route.name === 'settings' && <Settings />}
+        {route.name === 'settings' && <Settings clinician={clinician} />}
 
         {route.name === 'clinic' && (
           <ClinicProfile
+            clinician={clinician}
             onSaved={(saved) => {
               setClinic(saved);
               applyBranding(saved);

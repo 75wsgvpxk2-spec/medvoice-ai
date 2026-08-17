@@ -1143,6 +1143,46 @@ export const audit = {
     ).map(toAudit);
   },
 
+  /** One page of the trail, newest first, with the count it was drawn from. */
+  page(options: {
+    action?: string;
+    patientId?: string;
+    search?: string;
+    page: number;
+    pageSize: number;
+  }): { events: AuditEvent[]; total: number } {
+    const where: string[] = [];
+    const args: unknown[] = [];
+
+    if (options.action) {
+      where.push('action LIKE ?');
+      args.push(`${options.action}%`);
+    }
+    if (options.patientId) {
+      where.push('patient_id = ?');
+      args.push(options.patientId);
+    }
+    if (options.search) {
+      // Summary and actor cover what people actually look for: a name, or a
+      // phrase they remember from the entry.
+      where.push('(summary LIKE ? OR actor_name LIKE ?)');
+      args.push(`%${options.search}%`, `%${options.search}%`);
+    }
+
+    const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const counted = db()
+      .prepare(`SELECT COUNT(*) AS n FROM audit_event ${clause}`)
+      .get(...args) as Row;
+    const total = (counted['n'] as number) ?? 0;
+
+    const offset = Math.max(0, (options.page - 1) * options.pageSize);
+    const rows = db()
+      .prepare(`SELECT * FROM audit_event ${clause} ORDER BY at DESC, rowid DESC LIMIT ? OFFSET ?`)
+      .all(...args, options.pageSize, offset) as Row[];
+
+    return { events: rows.map(toAudit), total };
+  },
+
   actions(): string[] {
     return (
       db().prepare('SELECT DISTINCT action FROM audit_event ORDER BY action').all() as Row[]

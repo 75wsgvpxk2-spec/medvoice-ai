@@ -147,6 +147,22 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
               Sign in instead
             </button>
           )}
+
+          {/*
+            There is no "create an account" button once a clinic exists, and
+            that is the point: one installation serves one clinic, so an open
+            sign-up would let anyone reachable on the network create themselves
+            an account on a system holding patient records. Staff accounts come
+            from an administrator instead. Saying so is better than leaving
+            somebody staring at a form with no way forward.
+          */}
+          {hasAccount && !creating && (
+            <p className="hint auth-note">
+              No account? Your clinic administrator creates one for you, under
+              Settings → Staff accounts. Sign-up is only available when setting a clinic up
+              for the first time.
+            </p>
+          )}
         </form>
       </main>
     </div>

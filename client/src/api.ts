@@ -196,6 +196,10 @@ export interface AuditView {
   events: AuditEvent[];
   actions: string[];
   total: number;
+  totalUnfiltered: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
   integrity: { ok: boolean; checked: number; brokenAt: string | null; brokenSummary: string | null };
 }
 
@@ -331,10 +335,14 @@ export const api = {
     post<{ pronunciation: Pronunciation }>('/pronunciations', input),
   removePronunciation: (id: string) => del<{ ok: true }>(`/pronunciations/${id}`),
 
-  audit: (params: { action?: string; patientId?: string } = {}) => {
+  audit: (
+    params: { action?: string; patientId?: string; search?: string; page?: number } = {},
+  ) => {
     const q = new URLSearchParams();
     if (params.action) q.set('action', params.action);
     if (params.patientId) q.set('patientId', params.patientId);
+    if (params.search) q.set('search', params.search);
+    if (params.page) q.set('page', String(params.page));
     const suffix = q.toString();
     return request<AuditView>(`/audit${suffix ? `?${suffix}` : ''}`);
   },

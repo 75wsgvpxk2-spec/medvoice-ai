@@ -121,6 +121,9 @@ function readCookie(req: Request, name: string): string | undefined {
 /** DI-4: every route below this is scoped to the signed-in clinician. */
 const ENDED = 'Your session has ended. Sign in again to continue.';
 
+/** The only paths reachable while a temporary password is still in force. */
+const PASSWORD_CHANGE_ALLOWED = new Set(['/auth/password', '/auth/me', '/auth/logout']);
+
 function requireClinician(req: AuthedRequest, res: Response, next: NextFunction): void {
   const claims = readSessionToken(readCookie(req, config.sessionCookieName));
   if (!claims) {
@@ -154,6 +157,20 @@ function requireClinician(req: AuthedRequest, res: Response, next: NextFunction)
   const clinician = clinicians.byId(claims.clinicianId);
   if (!clinician || !clinician.active) {
     res.status(401).json({ error: 'This account is no longer active. Speak to your administrator.' });
+    return;
+  }
+
+  /*
+   * A temporary password was read aloud or written on paper to hand over, so it
+   * is a shared credential until it is replaced. Until then the session reaches
+   * only what is needed to replace it — the browser gate in App.tsx is a
+   * courtesy, not the enforcement.
+   */
+  if (clinician.mustChangePassword && !PASSWORD_CHANGE_ALLOWED.has(req.path)) {
+    res.status(403).json({
+      error: 'Set your own password before continuing.',
+      mustChangePassword: true,
+    });
     return;
   }
 
@@ -321,7 +338,8 @@ api.post('/auth/signup', (req, res) => {
  * alongside it — is the exact failure this guards against, because after a week
  * nobody can tell which is which.
  */
-api.post('/installation/go-live', requireClinician, (req: AuthedRequest, res) => {
+// Permanently deletes every patient record in the database.
+api.post('/installation/go-live', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
   if (installation.mode() === 'clinic') {
     res.status(409).json({ error: 'This installation is already using real records.' });
     return;
@@ -462,7 +480,7 @@ api.get('/clinic', requireClinician, (_req, res) => {
 /** Roughly 1.5 MB of base64, which is a generous logo and a poor photograph. */
 const MAX_LOGO_CHARS = 2_000_000;
 
-api.put('/clinic', requireClinician, (req, res) => {
+api.put('/clinic', requireClinician, requireAdmin, (req, res) => {
   const body = req.body as Partial<Record<string, string | null>>;
 
   const logo = body['logo'] ?? null;
@@ -1199,7 +1217,9 @@ const ALLOWED_UNITS: Record<keyof UnitPreferences, string[]> = {
   temperature: ['°C', '°F'],
 };
 
-api.put('/settings', requireClinician, (req: AuthedRequest, res) => {
+// Sets model.baseUrl — where every agent prompt, and so every raw encounter
+// note, is sent. Also the API key and the session timeouts. Admin only.
+api.put('/settings', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
   const body = req.body as Partial<ClinicSettings> & {
     apiKey?: string | null;
     transcriptionKey?: string | null;
@@ -1443,7 +1463,8 @@ api.get('/thresholds', requireClinician, (_req, res) => {
  * file untouched — this records a departure from it, and the departure carries
  * the justification a clinician would have to give for it anyway.
  */
-api.put('/thresholds/:name', requireClinician, (req: AuthedRequest, res) => {
+// Changes what the system flags for every patient in the clinic.
+api.put('/thresholds/:name', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
   const name = param(req, 'name');
   if (!isThresholdName(name)) {
     res.status(404).json({ error: 'That is not a threshold this system uses.' });
@@ -1506,7 +1527,7 @@ api.put('/thresholds/:name', requireClinician, (req: AuthedRequest, res) => {
 });
 
 /** Return one threshold to its published value. */
-api.delete('/thresholds/:name', requireClinician, (req: AuthedRequest, res) => {
+api.delete('/thresholds/:name', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
   const name = param(req, 'name');
   if (!isThresholdName(name)) {
     res.status(404).json({ error: 'That is not a threshold this system uses.' });
@@ -1784,11 +1805,25 @@ api.post('/auth/password', requireClinician, (req: AuthedRequest, res) => {
 api.get('/audit', requireClinician, (req, res) => {
   const action = String(req.query['action'] ?? '').trim() || undefined;
   const patientId = String(req.query['patientId'] ?? '').trim() || undefined;
-  const limit = Math.min(500, Math.max(10, Number(req.query['limit'] ?? 200) || 200));
+  const search = String(req.query['search'] ?? '').trim() || undefined;
+  const page = Math.max(1, Number(req.query['page'] ?? 1) || 1);
+  const pageSize = Math.min(200, Math.max(10, Number(req.query['pageSize'] ?? 50) || 50));
+
+  // Paged in SQL rather than in the browser: an audit trail is the one table
+  // here that only grows, and a year of a busy clinic is not a page.
+  const { events, total } = audit.page({ action, patientId, search, page, pageSize });
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   res.json({
-    events: audit.recent(limit, { action, patientId }),
+    events,
     actions: audit.actions(),
-    total: audit.total(),
+    total,
+    totalUnfiltered: audit.total(),
+    page: Math.min(page, totalPages),
+    pageSize,
+    totalPages,
+    // Always over the whole chain, never just the visible page — a break on
+    // page nine still means this page cannot be trusted.
     integrity: audit.verify(),
   });
 });

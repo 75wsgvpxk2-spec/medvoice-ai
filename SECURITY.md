@@ -21,6 +21,17 @@ vulnerability rather than a bug — even if it looks minor.
 - **Speech transcription uses a single-use token** that expires in two minutes,
   so the AssemblyAI key never reaches the client.
 - **`.env` and `data/*.db` are gitignored.** Check before you commit anyway.
+- **No session secret ships in this repository.** `.env.example` leaves it
+  blank; `npm run setup` generates one. A production start refuses to boot if
+  the secret is missing, short, or a known example value — the token is signed
+  with it, so a guessable key means anyone can forge a session for any
+  clinician.
+- **Privileged routes require an administrator.** Settings (which sets the model
+  endpoint, and so where patient notes are sent), clinical thresholds, the clinic
+  profile, and the destructive go-live switch.
+- **A temporary password reaches nothing but the password form.** It is handed
+  over verbally or on paper, so it is a shared credential until replaced; the
+  server enforces that, not just the browser.
 - **Session cookies are `httpOnly`** and signed with `SESSION_SECRET`. Set that
   to a long random value in any deployment: if it is unset the server generates
   one per boot, which signs everyone out on restart.
@@ -48,7 +59,8 @@ Here is exactly where this build stands against 45 CFR §164.312.
 | §164.312(a)(2)(iv) Encryption at rest | addressable | **Not implemented.** The database is a plain SQLite file. Use full-disk encryption. |
 | §164.312(b) Audit controls | required | **Implemented.** Every change, plus failed sign-ins and record exports. |
 | §164.312(c)(1) Integrity | required | **Partial.** Entries are hash-chained, so alteration is detectable. It is not prevented — anyone with the database file can rewrite the chain. |
-| §164.312(d) Person or entity authentication | required | **Partial.** Password with lockout by rate limit. No MFA. |
+| §164.312(d) Person or entity authentication | required | **Partial.** Password with lockout by rate limit; temporary passwords reach nothing until replaced. No MFA. |
+| §164.308(a)(4) Access control / minimum necessary | required | **Implemented.** Administrator and clinician roles, enforced on the server for every route that changes how the installation behaves. |
 | §164.312(e)(1) Transmission security | required | **Deployment's responsibility.** No TLS in the application; terminate it in a reverse proxy. See `docs/DEPLOYMENT.md`. |
 
 And the one that is not in §164.312 but decides everything else: **§164.308(b)
@@ -73,7 +85,9 @@ listed here so nobody has to discover them the hard way.
   patient data, the disk it sits on needs encrypting and backing up
   accordingly.
 - **Rate limiting is per IP.** On a clinic LAN behind one router, the whole
-  practice shares a budget.
+  practice shares a budget. Behind a reverse proxy, set `TRUST_PROXY` to the
+  number of proxies you control — without it every request appears to come from
+  the proxy and the whole internet shares one budget.
 - **No HTTPS in the default configuration.** Terminate TLS in front of it; see
   `docs/DEPLOYMENT.md`.
 - **Audit integrity is detective, not preventive.** The hash chain reveals

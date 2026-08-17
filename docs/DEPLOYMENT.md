@@ -21,13 +21,25 @@ Edit `.env` and set at minimum:
 
 ```bash
 SESSION_SECRET=<a long random string>
+TRUST_PROXY=1
 ```
 
-Generate one:
+`npm run setup` generates the secret for you. To do it by hand:
 
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
+
+**`TRUST_PROXY` is the number of reverse proxies in front of this server** — 1
+behind a single Caddy or nginx, 0 when exposed directly. It decides which
+address the rate limiter counts. Left at 0 behind a proxy, every request looks
+like it comes from the proxy and ten failed sign-ins from anywhere lock out the
+whole practice. Set higher than the number of hops you actually control and a
+client can forge `X-Forwarded-For` to dodge the limiter entirely.
+
+**`NODE_ENV=production` is required**, not optional. The session-secret guard
+and the error handler both key off it: without it the server will start on a
+weak secret with only a warning. The Docker image sets it already.
 
 Then:
 

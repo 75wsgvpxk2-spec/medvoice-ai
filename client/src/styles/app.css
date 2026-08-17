@@ -2152,3 +2152,10 @@ tbody tr:hover { background: var(--brand-wash); }
   color: var(--managed-ink);
   font-size: var(--text-sm);
 }
+
+.auth-note {
+  margin: 0;
+  padding-top: var(--gap-3);
+  border-top: 1px solid var(--line);
+  text-align: center;
+}

@@ -18,11 +18,14 @@
 
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { clinicians, clinic as clinicRepo, audit } from '../server/src/db/repositories.ts';
 import { hashPassword } from '../server/src/lib/auth.ts';
 import { DEFAULT_BRAND } from '../shared/types.ts';
 import { db, closeDb, id } from '../server/src/db/index.ts';
+import { ROOT } from '../server/src/lib/config.ts';
 import {
   assertSetupAllowed,
   InstallationConflict,
@@ -58,7 +61,33 @@ async function ask(question: string, fallback = ''): Promise<string> {
   return answer || fallback;
 }
 
+/**
+ * Writes a real session secret into .env if there is not one already.
+ *
+ * The self-serve path must not be able to produce an installation with a
+ * guessable signing key. Doing it here rather than asking means nobody has to
+ * know why it matters.
+ */
+function ensureSessionSecret(): 'generated' | 'existing' | 'no-env-file' {
+  const envPath = path.join(ROOT, '.env');
+  if (!fs.existsSync(envPath)) return 'no-env-file';
+
+  const contents = fs.readFileSync(envPath, 'utf8');
+  const match = contents.match(/^SESSION_SECRET=(.*)$/m);
+  const current = (match?.[1] ?? '').trim();
+  if (current.length >= 32 && current !== 'change-me-to-a-long-random-string') return 'existing';
+
+  const secret = randomBytes(32).toString('hex');
+  const next = match
+    ? contents.replace(/^SESSION_SECRET=.*$/m, `SESSION_SECRET=${secret}`)
+    : `${contents.trimEnd()}\nSESSION_SECRET=${secret}\n`;
+  fs.writeFileSync(envPath, next, { mode: 0o600 });
+  return 'generated';
+}
+
 async function main(): Promise<void> {
+  const secretState = ensureSessionSecret();
+
   // Opening the connection applies the schema and any migrations.
   db();
 
@@ -124,6 +153,12 @@ async function main(): Promise<void> {
 
   console.log(`\n${'='.repeat(52)}`);
   console.log('  Setup complete.\n');
+  if (secretState === 'generated') {
+    console.log('  A session signing key was generated and written to .env.');
+  } else if (secretState === 'no-env-file') {
+    console.log('  NOTE: no .env file found. Copy .env.example to .env and set');
+    console.log('        SESSION_SECRET before running this in a clinic.');
+  }
   console.log(`  Clinic     ${clinicName}`);
   console.log(`  Sign in    ${email}`);
   console.log(`  Password   ${password}`);

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClinicSettings, Pronunciation, UnitPreferences } from '../../../shared/types';
+import type { Clinician, ClinicSettings, Pronunciation, UnitPreferences } from '../../../shared/types';
 import { api, ApiError, type SettingsView, type ThresholdRow } from '../api';
 import { ErrorState, EmptyState } from '../components';
 import { useDictation } from '../lib/speech';
@@ -15,7 +15,11 @@ import { Users } from './Users';
  * it goes to the server and never comes back, so no screenshot of this page can
  * leak it.
  */
-export function Settings() {
+export function Settings({ clinician }: { clinician: Clinician }) {
+  // The server rejects these routes for a clinician (they set the model
+  // endpoint, the API key and the clinical thresholds). Showing the controls as
+  // editable and failing on save would be a worse way to learn that.
+  const isAdmin = clinician.role === 'admin';
   const [view, setView] = useState<SettingsView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -66,14 +70,23 @@ export function Settings() {
 
       {error && <ErrorState message={error} />}
 
+      {!isAdmin && (
+        <div className="hint card">
+          You are signed in as a clinician. Model, units, thresholds and clinic settings are
+          administrator-only — they change how the system behaves for everybody. Voice training
+          below is yours and you can change it.
+        </div>
+      )}
+
       <Users />
-      <ModelSection view={view} onSave={save} saving={saving} />
-      <TranscriptionSection settings={s} onSave={save} saving={saving} />
-      <UnitsSection settings={s} onSave={save} saving={saving} />
-      <KeywordSection settings={s} onSave={save} saving={saving} />
+      {isAdmin && <ModelSection view={view} onSave={save} saving={saving} />}
+      {isAdmin && <TranscriptionSection settings={s} onSave={save} saving={saving} />}
+      {isAdmin && <UnitsSection settings={s} onSave={save} saving={saving} />}
+      {isAdmin && <KeywordSection settings={s} onSave={save} saving={saving} />}
+      {/* Voice training is per-person, so everybody gets it. */}
       <VoiceTraining onError={setError} />
-      <ThresholdSection onError={setError} />
-      <ClinicSection settings={s} onSave={save} saving={saving} />
+      {isAdmin && <ThresholdSection onError={setError} />}
+      {isAdmin && <ClinicSection settings={s} onSave={save} saving={saving} />}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Clinic } from '../../../shared/types';
+import type { Clinic, Clinician } from '../../../shared/types';
 import { DEFAULT_BRAND } from '../../../shared/types';
 import { previewBranding } from '../lib/branding';
 import { api, ApiError } from '../api';
@@ -26,7 +26,14 @@ const BLANK: Omit<Clinic, 'updatedAt'> = {
  * practice does not. This is the record that heads anything printed or handed
  * to a patient, so the logo lives here rather than being a build-time asset.
  */
-export function ClinicProfile({ onSaved }: { onSaved: (clinic: Clinic) => void }) {
+export function ClinicProfile({
+  clinician,
+  onSaved,
+}: {
+  clinician: Clinician;
+  onSaved: (clinic: Clinic) => void;
+}) {
+  const isAdmin = clinician.role === 'admin';
   const [form, setForm] = useState<Omit<Clinic, 'updatedAt'>>(BLANK);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -94,6 +101,12 @@ export function ClinicProfile({ onSaved }: { onSaved: (clinic: Clinic) => void }
       </div>
 
       {error && <ErrorState message={error} />}
+
+      {!isAdmin && (
+        <div className="hint card">
+          Only an administrator can change the clinic profile. This is what is currently set.
+        </div>
+      )}
 
       <div className="card stack">
         <h2>Identity</h2>
@@ -279,7 +292,7 @@ export function ClinicProfile({ onSaved }: { onSaved: (clinic: Clinic) => void }
       </div>
 
       <div className="card row">
-        <button className="primary" type="submit" disabled={saving}>
+        <button className="primary" type="submit" disabled={saving || !isAdmin}>
           {saving ? 'Saving…' : 'Save clinic profile'}
         </button>
         {saved && <span style={{ color: 'var(--managed)', fontWeight: 600 }}>Saved</span>}

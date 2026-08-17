@@ -36,16 +36,28 @@ export function Audit({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
   const [view, setView] = useState<AuditView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
   const [open, setOpen] = useState<string | null>(null);
+
+  // Narrowing the trail invalidates the page number.
+  useEffect(() => {
+    setPage(1);
+  }, [action, search]);
 
   const load = () => {
     setError(null);
     api
-      .audit({ action: action || undefined })
+      .audit({ action: action || undefined, search: search || undefined, page })
       .then(setView)
       .catch((e: ApiError) => setError(e.message));
   };
-  useEffect(load, [action]);
+
+  useEffect(() => {
+    // Debounced so typing a colleague's name is not one query per keystroke.
+    const timer = window.setTimeout(load, 200);
+    return () => window.clearTimeout(timer);
+  }, [action, search, page]);
 
   if (error && !view) return <ErrorState message={error} onRetry={load} />;
   if (!view) return <div className="card">Loading the audit trail…</div>;
@@ -58,8 +70,9 @@ export function Audit({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
         <div>
           <h2>Audit trail</h2>
           <div className="sub tabular">
-            {view.total} recorded change{view.total === 1 ? '' : 's'}
-            {view.events.length < view.total && ` · showing the most recent ${view.events.length}`}
+            {view.total === view.totalUnfiltered
+              ? `${view.total.toLocaleString()} recorded change${view.total === 1 ? '' : 's'}`
+              : `${view.total.toLocaleString()} of ${view.totalUnfiltered.toLocaleString()} shown`}
           </div>
         </div>
         <button className="quiet" onClick={load}>
@@ -93,6 +106,13 @@ export function Audit({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
       </div>
 
       <div className="toolbar">
+        <input
+          placeholder="Search the summary or who did it"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search the audit trail"
+          style={{ minWidth: 240, flex: '1 1 240px' }}
+        />
         <select value={action} onChange={(e) => setAction(e.target.value)} aria-label="Filter by change type">
           <option value="">Every change</option>
           {view.actions.map((a) => (
@@ -101,10 +121,48 @@ export function Audit({ onOpenPatient }: { onOpenPatient: (patientId: string) =>
             </option>
           ))}
         </select>
+        {(action || search) && (
+          <button
+            className="link"
+            onClick={() => {
+              setAction('');
+              setSearch('');
+            }}
+          >
+            Clear
+          </button>
+        )}
         <span className="hint">Read-only. Entries are never edited or removed.</span>
       </div>
 
       {view.events.length === 0 && <EmptyState title="Nothing recorded under this filter yet." />}
+
+      {view.total > 0 && (
+        <div className="pager">
+          <span className="pager-count tabular">
+            {(view.page - 1) * view.pageSize + 1}–
+            {Math.min(view.page * view.pageSize, view.total)} of {view.total.toLocaleString()}
+          </span>
+          {view.totalPages > 1 && (
+            <span className="row" style={{ gap: 'var(--gap-2)' }}>
+              <button
+                className="quiet"
+                onClick={() => setPage((n) => Math.max(1, n - 1))}
+                disabled={view.page <= 1}
+              >
+                Previous
+              </button>
+              <button
+                className="quiet"
+                onClick={() => setPage((n) => Math.min(view.totalPages, n + 1))}
+                disabled={view.page >= view.totalPages}
+              >
+                Next
+              </button>
+            </span>
+          )}
+        </div>
+      )}
 
       {days.map(([day, events]) => (
         <section key={day} className="stack" style={{ gap: 'var(--gap-2)' }}>
