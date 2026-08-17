@@ -20,6 +20,46 @@ let client: OpenAI | null = null;
 let clientKey: string | null = null;
 let clientBase: string | null = null;
 
+/**
+ * Normalises a provider's error body into the shape the SDK can read.
+ *
+ * Google returns errors as a JSON *array* — `[{ "error": {...} }]` — where the
+ * SDK expects an object. It cannot parse that, so it reports "404 status code
+ * (no body)" and throws away the only useful sentence in the response. In this
+ * case that sentence was "This model is no longer available to new users",
+ * which is the entire diagnosis; without it the failure looks like a broken
+ * integration rather than a model name to change.
+ *
+ * Only error responses are touched, and only to unwrap an array.
+ */
+const normalisingFetch: typeof fetch = async (input, init) => {
+  const response = await fetch(input, init);
+  if (response.ok) return response;
+
+  const text = await response.clone().text();
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return new Response(JSON.stringify(parsed[0]), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  } catch {
+    // Not JSON. Hand the text back so the SDK reports something rather than
+    // "(no body)".
+    if (text.trim()) {
+      return new Response(JSON.stringify({ error: { message: text.slice(0, 500) } }), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+  return response;
+};
+
 function openai(): OpenAI {
   const key = settings.apiKey();
   const base = settings.baseUrl();
@@ -29,6 +69,7 @@ function openai(): OpenAI {
       apiKey: key ?? 'not-required',
       baseURL: base || undefined,
       maxRetries: 1,
+      fetch: normalisingFetch,
     });
     clientKey = key;
     clientBase = base;

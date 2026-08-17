@@ -142,9 +142,14 @@ speaking the OpenAI chat-completions protocol — Groq, Together, OpenRouter, a
 LiteLLM gateway, a local Ollama. Chosen from a dropdown in Settings, not a fork.
 
 For a clinic without a budget, **Google Gemini has a genuine free tier** with no
-card required: pick it in Settings, take a key from
-[AI Studio](https://aistudio.google.com/apikey), and the whole system runs on
-`gemini-2.5-flash`. Rate limits suit a clinic-sized caseload.
+card required: pick it in Settings and take a key from
+[AI Studio](https://aistudio.google.com/apikey). Verified end to end on a newly
+issued key.
+
+One trap worth knowing: Google retires models for *new* keys while still listing
+them on the models endpoint, so a model name that works on an older key can
+return 404 on a fresh one. The preset tracks a model that currently works, and
+Settings accepts any name if it moves on.
 
 Running the models on your own hardware answers the data-residency question
 outright — with a local endpoint, no patient text leaves the building.

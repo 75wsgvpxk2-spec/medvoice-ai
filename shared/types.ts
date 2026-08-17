@@ -599,7 +599,10 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     label: 'Google Gemini — free tier',
     provider: 'compatible',
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-    model: 'gemini-2.5-flash',
+    // Google retires models for *new* keys while still listing them, so a model
+    // that works on an old key can 404 on a fresh one. Verified working against
+    // a newly issued key; if it stops, Settings takes any model name.
+    model: 'gemini-3-flash-preview',
     note: 'A genuine free tier with no card required, through Gemini\u2019s OpenAI-compatible endpoint. Rate limited, which suits a clinic-sized caseload.',
     keyUrl: 'https://aistudio.google.com/apikey',
   },
