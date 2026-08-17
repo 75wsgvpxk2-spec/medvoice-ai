@@ -102,6 +102,40 @@ const WEAK_SECRETS = new Set([
   'test-secret-not-used-outside-tests',
 ]);
 
+/**
+ * Refuses to run a clinic on the test stand-ins.
+ *
+ * MODEL_TEST_DOUBLE lets the scenario suite exercise the agents without a key.
+ * If it ever reached a deployment, the agents would answer from encoded rules
+ * while every screen still attributed the words to a named model — the exact
+ * situation removing the fallback was meant to end, and undetectable from the
+ * interface. Documenting "never set this in production" is not a control; this
+ * is. It exits rather than warns, because a clinic cannot tell from the outside
+ * that anything is wrong.
+ */
+export function checkTestDouble(): void {
+  if (!config.useTestDouble) return;
+
+  if (config.isProd) {
+    console.error(
+      [
+        '',
+        '='.repeat(72),
+        '  MODEL_TEST_DOUBLE is set, and NODE_ENV is production.',
+        '',
+        '  This makes the agents answer from encoded test stand-ins instead of',
+        '  a model, while the interface still names the model. Refusing to',
+        '  start. Unset MODEL_TEST_DOUBLE; it belongs only to `npm test`.',
+        '='.repeat(72),
+        '',
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+
+  console.warn('  Model         TEST STAND-INS (MODEL_TEST_DOUBLE) — not a model. For tests only.');
+}
+
 export function checkSessionSecret(): void {
   const provided = process.env.SESSION_SECRET?.trim() ?? '';
 

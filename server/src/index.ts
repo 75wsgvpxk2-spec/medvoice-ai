@@ -2,7 +2,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import helmet from 'helmet';
 import path from 'node:path';
 import fs from 'node:fs';
-import { checkSessionSecret, config, ROOT } from './lib/config.ts';
+import { checkTestDouble, checkSessionSecret, config, ROOT } from './lib/config.ts';
 import * as settings from './lib/settings.ts';
 import { installResolver } from './lib/thresholds.ts';
 import { startScheduler } from './orchestration/automations.ts';
@@ -13,6 +13,7 @@ import { clinicians } from './db/repositories.ts';
 
 // Before anything can issue a cookie signed with it.
 checkSessionSecret();
+checkTestDouble();
 
 const app = express();
 
