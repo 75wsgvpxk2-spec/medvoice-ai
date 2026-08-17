@@ -32,6 +32,7 @@ import { seed as seedDemoPopulation } from '../db/seed.ts';
 import * as runtime from '../lib/settings.ts';
 import * as thresholds from '../lib/thresholds.ts';
 import * as installation from '../lib/installation.ts';
+import * as automations from '../orchestration/automations.ts';
 import { describeThresholds, isThresholdName } from '../lib/thresholds.ts';
 import { TH, verifyReference } from '../clinical/reference.ts';
 import { auditTrail } from './audit-trail.ts';
@@ -45,6 +46,7 @@ import { subscribe } from '../orchestration/events.ts';
 import { summariseSpend } from '../model/spend.ts';
 import { db, id } from '../db/index.ts';
 import type {
+  AutomationId,
   ClinicSettings,
   DismissalReason,
   Patient,
@@ -909,6 +911,35 @@ api.post('/patients', requireClinician, (req: AuthedRequest, res) => {
 
   patients.insert(patient);
   res.status(201).json({ patient });
+
+  /*
+   * Assess them straight away, if the clinic has that automation on.
+   *
+   * Deliberately after the response and deliberately not awaited: adding a
+   * patient should return the moment the record exists, not when an agent has
+   * finished thinking about them. The queue updates over the event stream when
+   * the assessment lands, which is the same path a population run uses.
+   */
+  if (automations.isEnabled('assess_new_patients')) {
+    void assessPatientRun(patient.id, { trigger: 'automation', correlationId: id('corr') })
+      .then(() => {
+        rerankQueue(patient.clinicianId);
+        audit.record({
+          actor: 'system',
+          actorName: 'Assess new patients',
+          action: 'automation.success',
+          entityType: 'automation',
+          entityId: 'assess_new_patients',
+          patientId: patient.id,
+          summary: `Assessed ${patient.name} on arrival and placed them in the queue.`,
+        });
+      })
+      .catch((error: unknown) => {
+        // The patient exists either way; a failed assessment is not a failed
+        // registration, and must not be reported as one.
+        console.error('AUTOMATION assess_new_patients failed', error);
+      });
+  }
 });
 
 api.get('/patients/:id', requireClinician, (req: AuthedRequest, res) => {
@@ -1552,6 +1583,86 @@ api.delete('/thresholds/:name', requireClinician, requireAdmin, (req: AuthedRequ
   });
 
   res.json({ thresholds: describeThresholds() });
+});
+
+/* ------------------------------------------------------------ automations -- */
+
+/**
+ * Admin-only, all three.
+ *
+ * An automation changes what the installation does when nobody is watching,
+ * which is the same class of privilege as the model endpoint and the clinical
+ * thresholds — and a clinician who could switch one on could spend the clinic's
+ * budget overnight.
+ */
+api.get('/automations', requireClinician, requireAdmin, (_req, res) => {
+  res.json({ automations: automations.views(), spend: summariseSpend() });
+});
+
+api.put('/automations/:id', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const automationId = param(req, 'id') as AutomationId;
+  if (!automations.DEFINITIONS.some((d) => d.id === automationId)) {
+    res.status(404).json({ error: 'That is not an automation this system runs.' });
+    return;
+  }
+
+  const body = req.body as { enabled?: boolean; time?: string; weekday?: number };
+  const patch: { enabled?: boolean; time?: string; weekday?: number } = {};
+
+  if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled);
+  if (body.time !== undefined) {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(body.time))) {
+      res.status(400).json({ error: 'Enter a time as HH:MM, for example 03:00.' });
+      return;
+    }
+    patch.time = String(body.time);
+  }
+  if (body.weekday !== undefined) {
+    const day = Number(body.weekday);
+    if (!Number.isInteger(day) || day < 0 || day > 6) {
+      res.status(400).json({ error: 'Choose a day of the week.' });
+      return;
+    }
+    patch.weekday = day;
+  }
+
+  const before = automations.configFor(automationId);
+  automations.update(automationId, patch, req.clinicianId!);
+  const after = automations.configFor(automationId);
+
+  const clinician = clinicians.byId(req.clinicianId!);
+  const label = automations.DEFINITIONS.find((d) => d.id === automationId)?.label ?? automationId;
+  audit.record({
+    actor: req.clinicianId!,
+    actorName: clinician?.name ?? 'Unknown clinician',
+    action: before.enabled !== after.enabled ? (after.enabled ? 'automation.enabled' : 'automation.disabled') : 'automation.rescheduled',
+    entityType: 'automation',
+    entityId: automationId,
+    summary:
+      before.enabled !== after.enabled
+        ? `${after.enabled ? 'Switched on' : 'Switched off'} the ${label.toLowerCase()} automation.`
+        : `Rescheduled the ${label.toLowerCase()} automation to ${after.time}.`,
+    detail: { from: before, to: after },
+  });
+
+  res.json({ automations: automations.views() });
+});
+
+/** Run one now. The demo path, and how an admin tests a schedule. */
+api.post('/automations/:id/run', requireClinician, requireAdmin, async (req: AuthedRequest, res) => {
+  const automationId = param(req, 'id') as AutomationId;
+  if (!automations.DEFINITIONS.some((d) => d.id === automationId)) {
+    res.status(404).json({ error: 'That is not an automation this system runs.' });
+    return;
+  }
+
+  const clinician = clinicians.byId(req.clinicianId!);
+  const result = await automations.runAutomation(automationId, {
+    manual: true,
+    actorName: `${clinician?.name ?? 'A clinician'} (run now)`,
+  });
+
+  res.json({ ...result, automations: automations.views(), queue: buildQueue(req.clinicianId!) });
 });
 
 /* -------------------------------------------------------- transcription -- */

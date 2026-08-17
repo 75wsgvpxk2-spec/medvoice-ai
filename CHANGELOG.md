@@ -5,6 +5,12 @@ Notable changes. Dates are the day the work landed on `main`.
 ## Unreleased
 
 ### Added
+- **Agent automations.** Four toggleable flows that run without a human click:
+  overnight population sweep, assess-on-arrival for new patients, weekly
+  documentation scan, and a daily recheck of overdue patients. Off by default,
+  admin-only, recorded against the system in the audit trail. None cross a
+  clinician decision point, and one that would breach the budget reserve refuses
+  to run.
 - Staff accounts with roles, temporary passwords and deactivation, so every
   audit entry names an individual (HIPAA §164.312(a)(2)(i)).
 - Automatic logoff after inactivity, configurable (§164.312(a)(2)(iii)).

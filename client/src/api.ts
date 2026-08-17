@@ -16,6 +16,7 @@ import type {
   StructuredContent,
   FieldConfidence,
   PatientProfile,
+  AutomationView,
   ClinicSettings,
   AuditEvent,
   Pronunciation,
@@ -165,6 +166,9 @@ export interface ThresholdRow {
 }
 
 export interface SpendSummary {
+  /** False once spend has passed the reserve; automations refuse to run. */
+  reserveIntact: boolean;
+  spendableUsd: number;
   totalCalls: number;
   liveCalls: number;
   deterministicCalls: number;
@@ -319,6 +323,15 @@ export const api = {
     post<{ temporaryPassword: string }>(`/users/${id}/reset-password`, {}),
   changePassword: (current: string, next: string) =>
     post<{ ok: true }>('/auth/password', { current, next }),
+
+  automations: () => request<{ automations: AutomationView[]; spend: SpendSummary }>('/automations'),
+  setAutomation: (id: string, patch: { enabled?: boolean; time?: string; weekday?: number }) =>
+    put<{ automations: AutomationView[] }>(`/automations/${id}`, patch),
+  runAutomation: (id: string) =>
+    post<{ outcome: string; detail: string; automations: AutomationView[]; queue: QueueView }>(
+      `/automations/${id}/run`,
+      {},
+    ),
 
   settings: () => request<SettingsView>('/settings'),
   thresholds: () => request<{ thresholds: ThresholdRow[] }>('/thresholds'),

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { checkSessionSecret, config, ROOT } from './lib/config.ts';
 import * as settings from './lib/settings.ts';
 import { installResolver } from './lib/thresholds.ts';
+import { startScheduler } from './orchestration/automations.ts';
 import { db } from './db/index.ts';
 import { api } from './routes/api.ts';
 import { verifyReference } from './clinical/reference.ts';
@@ -79,6 +80,10 @@ app.use((_req, res, next) => {
 
 // Clinic threshold adjustments must be live before the first rule evaluates.
 installResolver();
+
+// Agent automations. Starts the minute tick and catches up anything missed
+// while the server was down.
+startScheduler();
 
 app.use('/api', api);
 

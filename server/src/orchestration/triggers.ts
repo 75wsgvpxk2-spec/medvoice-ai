@@ -6,6 +6,7 @@ import { assessPatientRun, assessPopulation, rerankQueue } from '../agents/clini
 import { scanPatientRun, scanPopulation } from '../agents/documentation.ts';
 import { publish } from './events.ts';
 import type {
+  AgentTrigger,
   ContextBrief,
   Encounter,
   FieldConfidence,
@@ -345,7 +346,10 @@ export interface PopulationRunResult {
  * The population run of Section 6. This is what populates the queue before any
  * encounter exists (PR-1) and the recovery path when the queue looks stale.
  */
-export async function runPopulation(clinicianId: string, options: { asOf?: Date } = {}): Promise<PopulationRunResult> {
+export async function runPopulation(
+  clinicianId: string,
+  options: { asOf?: Date; trigger?: AgentTrigger } = {},
+): Promise<PopulationRunResult> {
   const startedAt = Date.now();
   const correlationId = id('corr');
   const asOf = options.asOf ?? new Date();
@@ -354,9 +358,14 @@ export async function runPopulation(clinicianId: string, options: { asOf?: Date 
   publish({ type: 'agent_started', agent: 'clinical_intelligence', correlationId, patientId: null });
   publish({ type: 'agent_started', agent: 'documentation_and_compliance', correlationId, patientId: null });
 
+  // Carried through to the run log so a sweep that nobody asked for is
+  // distinguishable from one somebody clicked. That distinction is the whole
+  // reason automations are worth having a run log for.
+  const trigger = options.trigger ?? 'population_run';
+
   const [clinical, documentation] = await Promise.allSettled([
-    assessPopulation(clinicianId, { asOf, trigger: 'population_run', correlationId }),
-    scanPopulation(clinicianId, { asOf, trigger: 'population_run', correlationId }),
+    assessPopulation(clinicianId, { asOf, trigger, correlationId }),
+    scanPopulation(clinicianId, { asOf, trigger, correlationId }),
   ]);
 
   const failures: PopulationRunResult['failures'] = [];

@@ -390,7 +390,7 @@ export function App() {
           />
         )}
 
-        {route.name === 'activity' && <AgentActivity onBack={() => setRoute({ name: 'queue' })} />}
+        {route.name === 'activity' && <AgentActivity clinician={clinician} />}
       </main>
 
       {/* The signature element: persistent, and never blocking the screen. */}

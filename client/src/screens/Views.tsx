@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
-import type { AgentRun } from '../../../shared/types';
+import type { AgentRun, Clinician } from '../../../shared/types';
+import { Automations } from '../components/Automations';
 import { api, ApiError, type PatientPage, type SpendSummary, type Transparency } from '../api';
 import { StatusMarker, ErrorState, EmptyState } from '../components';
 import { Logo } from '../components/Logo';
@@ -427,7 +428,7 @@ export function PopulationList({
 
 /* Section 8.8 — agent activity view ---------------------------------------- */
 
-export function AgentActivity({ onBack }: { onBack: () => void }) {
+export function AgentActivity({ clinician }: { clinician: Clinician; onBack?: () => void }) {
   const [runs, setRuns] = useState<AgentRun[] | null>(null);
   const [spend, setSpend] = useState<SpendSummary | null>(null);
   const [transparency, setTransparency] = useState<Transparency | null>(null);
@@ -538,6 +539,9 @@ export function AgentActivity({ onBack }: { onBack: () => void }) {
       </div>
 
       {error && <ErrorState message={error} onRetry={load} />}
+
+      {/* Above the log: what the system will do next, before what it has done. */}
+      <Automations clinician={clinician} />
 
       {runs && runs.length === 0 && <EmptyState title="No agent has run yet." />}
 

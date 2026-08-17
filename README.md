@@ -121,6 +121,17 @@ Four agents, named in the interface wherever their output appears:
 Three decision points belong to the clinician and cannot be automated: approving
 a structured note, acting on a risk flag, and resolving a documentation alert.
 
+**Agent activity → Automations** switches on work the system does unasked — an
+overnight sweep that re-ranks the queue before the clinic opens, assessment of
+new patients on arrival, a weekly documentation scan, and a daily recheck of
+patients past their review interval. All off by default. Each run appears in the
+run log with an `automation` trigger and in the audit trail attributed to the
+system, so a clinician can always tell what happened while nobody was watching.
+
+None of them cross the three decision points above, and an automation that would
+take spend past the budget reserve refuses to start rather than emptying the
+account overnight.
+
 **Rules decide what is clinically significant; agents decide how to say it.**
 The thresholds are encoded and testable. The model's job is judgement and
 language, not arithmetic — which is why a wrong model answer degrades the

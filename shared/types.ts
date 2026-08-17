@@ -404,6 +404,10 @@ export type AgentTrigger =
   | 'alert_resolution'
   | 'flag_dismissal'
   | 'encounter_amendment'
+  /* Ran on a schedule, with nobody watching. Distinguished from the triggers
+     above so the run log can show the system acting on its own — which is the
+     whole point of having automations. */
+  | 'automation'
   | 'phase0_test_call';
 
 /**
@@ -645,4 +649,39 @@ export interface Pronunciation {
   sampleCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Agent automations
+// ---------------------------------------------------------------------------
+
+export type AutomationId =
+  | 'overnight_sweep'
+  | 'assess_new_patients'
+  | 'documentation_sweep'
+  | 'recheck_overdue';
+
+export type AutomationOutcome = 'success' | 'failure' | 'skipped';
+
+export interface AutomationConfig {
+  enabled: boolean;
+  /** 24-hour "HH:MM" for the daily and weekly schedules. */
+  time: string;
+  /** 0 = Sunday. Weekly automations only. */
+  weekday: number;
+  lastRunAt: string | null;
+  lastOutcome: AutomationOutcome | null;
+  lastDetail: string | null;
+  lastCostUsd: number;
+}
+
+export interface AutomationView {
+  id: AutomationId;
+  label: string;
+  description: string;
+  /** 'event' automations react to something happening, not to the clock. */
+  cadence: 'daily' | 'weekly' | 'event';
+  config: AutomationConfig;
+  /** Null for event-driven automations, and when disabled. */
+  nextRunAt: string | null;
 }

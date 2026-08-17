@@ -5,6 +5,11 @@ import { patients, alerts, runs, flags, clinicians, audit } from '../server/src/
 import { summariseSpend } from '../server/src/model/spend.ts';
 import { db } from '../server/src/db/index.ts';
 import {
+  DEFINITIONS,
+  configFor,
+  runAutomation,
+} from '../server/src/orchestration/automations.ts';
+import {
   hashPassword,
   verifyPassword,
   makeSessionToken,
@@ -330,5 +335,79 @@ describe('Audit integrity — §164.312(c)(1)', () => {
     // no longer its predecessor.
     db().prepare("DELETE FROM audit_event WHERE action = 'test.b'").run();
     expect(audit.verify().ok).toBe(false);
+  });
+});
+
+describe('Agent automations', () => {
+  beforeAll(() => {
+    freshPopulation();
+  });
+
+  it('is off by default — nothing runs on a fresh installation', () => {
+    for (const definition of DEFINITIONS) {
+      expect(configFor(definition.id).enabled, `${definition.id} should be off`).toBe(false);
+    }
+  });
+
+  it('automates only the four flows that cross no human decision', () => {
+    /*
+     * Section 15 fixes three decisions as the clinician's: approving a note,
+     * acting on a flag, and resolving an alert. Every automation below only
+     * assesses, scans or ranks.
+     *
+     * Asserted as an exact set rather than by scanning the descriptions for
+     * forbidden words — prose defeats that (the first version of this test
+     * failed on "the list already in order"). An exact set means adding an
+     * automation breaks this test, which forces whoever adds it to state that
+     * their new flow does not decide anything. That deliberate stop is the
+     * point; a regex over marketing copy would not have provided it.
+     */
+    expect(DEFINITIONS.map((d) => d.id).sort()).toEqual([
+      'assess_new_patients',
+      'documentation_sweep',
+      'overnight_sweep',
+      'recheck_overdue',
+    ]);
+  });
+
+  it('runs one at a time', async () => {
+    const [first, second] = await Promise.all([
+      runAutomation('overnight_sweep'),
+      runAutomation('recheck_overdue'),
+    ]);
+    // Two automations re-ranking the queue concurrently would fight over it.
+    expect([first.outcome, second.outcome].filter((o) => o === 'skipped')).toHaveLength(1);
+    expect(second.detail + first.detail).toMatch(/already running/);
+  });
+
+  it('refuses to run once spend passes the reserve', async () => {
+    db()
+      .prepare(
+        `INSERT INTO model_call (id, agent, provider, model, input_tokens, output_tokens,
+           cache_read_tokens, cache_write_tokens, cost_usd, duration_ms, cached, created_at)
+         VALUES ('mc_over','clinical_intelligence','anthropic','m',0,0,0,0,99999,0,0,datetime('now'))`,
+      )
+      .run();
+
+    const result = await runAutomation('overnight_sweep');
+    expect(result.outcome).toBe('skipped');
+    expect(result.detail).toMatch(/reserve/i);
+    // Recorded, not silent: the card has to be able to say why nothing happened.
+    expect(configFor('overnight_sweep').lastDetail).toMatch(/reserve/i);
+
+    db().prepare("DELETE FROM model_call WHERE id = 'mc_over'").run();
+  });
+
+  it('survives a failure and runs again afterwards', async () => {
+    db().prepare('UPDATE clinician SET active = 0').run();
+    const broken = await runAutomation('overnight_sweep');
+    expect(broken.outcome).not.toBe('success');
+
+    db().prepare('UPDATE clinician SET active = 1').run();
+    const recovered = await runAutomation('overnight_sweep');
+
+    // The property worth testing: a scheduler that dies on its first error
+    // looks identical to a working one until the day it matters.
+    expect(recovered.outcome).toBe('success');
   });
 });
