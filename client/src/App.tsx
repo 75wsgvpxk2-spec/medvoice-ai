@@ -37,6 +37,8 @@ export function App() {
   // Why the sign-in screen is showing, when it is showing because of a 401
   // rather than because nobody has signed in yet.
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+  /** Something to tell the clinician on whichever screen they land on next. */
+  const [notice, setNotice] = useState<string | null>(null);
   const [route, setRoute] = useState<Route>({ name: 'queue' });
 
   const [queue, setQueue] = useState<QueueView | null>(null);
@@ -167,15 +169,32 @@ export function App() {
     }
   };
 
-  const onApproved = (outcome: ApprovalOutcome) => {
+  /*
+   * Approval returns to the patient, not the queue.
+   *
+   * Section 8.6 sent the clinician back to the queue on the reasoning that the
+   * results land there. They land on the patient too, and that is where the
+   * clinician was looking: the note they just approved, the flags Agent 3 has
+   * raised from it, the gaps Agent 4 found, the new status. Being thrown back
+   * to a population list means leaving the person you were just documenting to
+   * go and find them again. Recorded in docs/DEVIATIONS.md.
+   */
+  const onApproved = (outcome: ApprovalOutcome, patientId: string) => {
     setQueue(outcome.queue);
-    // Section 8.6: approval returns to the queue, where the results land.
-    setRoute({ name: 'queue' });
-    if (outcome.failures.length > 0) {
-      setQueueError(
-        `${outcome.failures.map((f) => `${f.agent} failed: ${f.message}`).join('; ')}. The other agent's results are shown.`,
-      );
-    }
+    setRoute({ name: 'patient', patientId });
+
+    /*
+     * A partial assessment has to be reported wherever the clinician lands, not
+     * on the screen they happen to be leaving. This used to be written into the
+     * queue's error slot, which — now that approval no longer ends on the queue
+     * — would have put the one message saying "an agent failed" on a screen
+     * nobody was about to look at.
+     */
+    setNotice(
+      outcome.failures.length > 0
+        ? `${outcome.failures.map((f) => `${f.agent} failed: ${f.message}`).join('; ')}. The other agent's results are on the record below.`
+        : null,
+    );
   };
 
   return (
@@ -332,6 +351,15 @@ export function App() {
         />
       )}
       <main className="main">
+        {notice && (
+          <div className="notice spread" role="status" style={{ marginBottom: 'var(--gap-4)' }}>
+            <span>{notice}</span>
+            <button className="quiet" onClick={() => setNotice(null)}>
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {route.name === 'dashboard' && (
           <Dashboard
             onOpenPatient={(patientId) => setRoute({ name: 'patient', patientId })}
@@ -366,7 +394,7 @@ export function App() {
         {route.name === 'encounter' && encounterPatient && (
           <NewEncounter
             patient={encounterPatient}
-            onApproved={onApproved}
+            onApproved={(outcome) => onApproved(outcome, route.patientId)}
             onCancel={() => setRoute({ name: 'patient', patientId: route.patientId })}
           />
         )}

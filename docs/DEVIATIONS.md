@@ -324,3 +324,34 @@ scenario, and it caught a real defect.
 guard makes it much less likely; it cannot make it impossible. A clinical
 deployment should treat any agent assertion about the record as checkable
 against the record, and this one was not checked before being shown.
+
+---
+
+## 8. Section 8.6 — approval returns to the patient, not the queue
+
+**The document says:** after a clinician approves a structured note, the
+interface returns to the priority queue, "where the results land".
+
+**This build does:** returns to the patient's record.
+
+**Why:** the results land in both places, and the queue is the one the clinician
+was not looking at. Approving a note is the end of documenting a person, and the
+things produced by that approval — the flags Agent 3 raised from the note, the
+gaps Agent 4 found, the new status, the note itself now in the record — are all
+on the patient's chart. Sending the clinician back to a population list means
+leaving the person they were mid-way through and navigating to find them again
+to see what just happened.
+
+The queue is still re-ranked and still updated in the same response, so the
+population view is correct the moment it is next opened. Nothing about the
+ranking behaviour changed — only where the clinician is standing when it does.
+
+**Consequence handled:** the one message that says an agent failed used to be
+written into the queue's error slot. With approval no longer ending on the
+queue, that message would have been posted to a screen nobody was about to
+look at, so a partial assessment is now reported on whichever screen the
+clinician lands on.
+
+**Requested by the product owner** after using the flow, which is the same
+reason Section 8.6 wrote the original rule — this build just has the benefit of
+having watched somebody use it.

@@ -50,6 +50,9 @@ Notable changes. Dates are the day the work landed on `main`.
   one clinic share a caseload. See `docs/DEVIATIONS.md` item 2.
 - Model calls fall back to the local engine when the API is unreachable, out of
   credit or rejecting the key, instead of failing the request.
+- Approving a note returns to the patient's record rather than the priority
+  queue. The results land on both, and the record is the one the clinician was
+  already looking at. See `docs/DEVIATIONS.md` item 8.
 - Settings no longer asks when to use the model. The chosen provider is used
   whenever it can be and the local engine catches whatever falls through, so the
   screen reports which engine resulted instead of asking a clinic to configure
