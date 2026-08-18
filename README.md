@@ -259,7 +259,9 @@ are small.
 | [`docs/clinical-reference.md`](docs/clinical-reference.md) | Every threshold with its published source — the file to fork |
 | [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md) | Where this build departs from its specification, and why |
 | [`docs/SCENARIOS.md`](docs/SCENARIOS.md) | Every test scenario with its result |
+| [`docs/OVERVIEW.md`](docs/OVERVIEW.md) | Problem, solution, business model, go-to-market |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How it fits together — three diagrams |
+| [`docs/COMPLIANCE.md`](docs/COMPLIANCE.md) | Privacy, EU AI Act, GDPR/CCPA, bias, safety, risk |
 | [`docs/STACK.md`](docs/STACK.md) | Stack choices and their justifications |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Running it somewhere real |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, and the bar for clinical changes |
