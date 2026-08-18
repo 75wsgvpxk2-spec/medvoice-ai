@@ -109,6 +109,10 @@ The database is a volume, so it survives rebuilds. See
 
 ## How it works
 
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) has the diagrams: the system, an
+encounter end to end with the three human decision points, and how a threshold
+gets from published guidance to a flag a clinician can trace.
+
 Four agents, named in the interface wherever their output appears:
 
 | Agent | Does | Runs |
@@ -255,6 +259,7 @@ are small.
 | [`docs/clinical-reference.md`](docs/clinical-reference.md) | Every threshold with its published source — the file to fork |
 | [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md) | Where this build departs from its specification, and why |
 | [`docs/SCENARIOS.md`](docs/SCENARIOS.md) | Every test scenario with its result |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How it fits together — three diagrams |
 | [`docs/STACK.md`](docs/STACK.md) | Stack choices and their justifications |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Running it somewhere real |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, and the bar for clinical changes |
