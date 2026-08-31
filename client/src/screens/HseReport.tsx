@@ -623,9 +623,12 @@ function ReviewStep({
 export function HseReportList({
   onOpen,
   onNew,
+  onBack,
 }: {
   onOpen: (reportId: string) => void;
   onNew: () => void;
+  /** Back to the Operations hub, which is where this now lives. */
+  onBack: () => void;
 }) {
   const [rows, setRows] = useState<HseReport[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -639,11 +642,14 @@ export function HseReportList({
   return (
     <div className="stack">
       <div className="spread page-head">
-        <div>
-          <h2>HSE medical reports</h2>
-          <div className="sub">Occupational health examinations, drafted from the record</div>
+        <div className="row" style={{ gap: 'var(--gap-3)' }}>
+          <button className="quiet" onClick={onBack} aria-label="Back to operations">←</button>
+          <div>
+            <h2>Generate Forms</h2>
+            <div className="sub">Occupational health examinations, drafted from the record</div>
+          </div>
         </div>
-        <button className="primary" onClick={onNew}>+ New report</button>
+        <button className="primary" onClick={onNew}>+ New HSE report</button>
       </div>
 
       {error && <ErrorState message={error} onRetry={load} />}

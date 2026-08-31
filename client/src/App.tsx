@@ -33,7 +33,6 @@ type Route =
   | { name: 'clinic' }
   | { name: 'activity' }
   | { name: 'operations'; screen: OpsScreen }
-  | { name: 'hse-list' }
   | { name: 'hse'; patientId?: string; reportId?: string };
 
 export function App() {
@@ -307,19 +306,11 @@ export function App() {
             onClick={() => setRoute({ name: 'audit' })}
           />
           <NavItem
-            label="HSE reports"
-            icon={<IconDocument />}
-            active={route.name === 'hse-list' || route.name === 'hse'}
-            onClick={() => setRoute({ name: 'hse-list' })}
+            label="Operations"
+            icon={<IconOperations />}
+            active={route.name === 'operations' || route.name === 'hse'}
+            onClick={() => setRoute({ name: 'operations', screen: 'hub' })}
           />
-          {clinician.role === 'admin' && (
-            <NavItem
-              label="Operations"
-              icon={<IconOperations />}
-              active={route.name === 'operations'}
-              onClick={() => setRoute({ name: 'operations', screen: 'hub' })}
-            />
-          )}
           <NavItem
             label="Settings"
             icon={<IconSettings />}
@@ -477,23 +468,29 @@ export function App() {
             case 'invoices': return <Invoices clinic={clinic} onBack={back} />;
             case 'expenses': return <Expenses clinic={clinic} onBack={back} />;
             case 'reports': return <Reports clinic={clinic} onBack={back} />;
+            case 'forms':
+              return (
+                <HseReportList
+                  onBack={back}
+                  onOpen={(reportId) => setRoute({ name: 'hse', reportId })}
+                  onNew={() => setRoute({ name: 'population' })}
+                />
+              );
             default:
-              return <OperationsHub onOpen={(screen) => setRoute({ name: 'operations', screen })} />;
+              return (
+                <OperationsHub
+                  isAdmin={clinician.role === 'admin'}
+                  onOpen={(screen) => setRoute({ name: 'operations', screen })}
+                />
+              );
           }
         })()}
-
-        {route.name === 'hse-list' && (
-          <HseReportList
-            onOpen={(reportId) => setRoute({ name: 'hse', reportId })}
-            onNew={() => setRoute({ name: 'population' })}
-          />
-        )}
 
         {route.name === 'hse' && (
           <HseWizard
             patientId={route.patientId}
             reportId={route.reportId}
-            onDone={() => setRoute({ name: 'hse-list' })}
+            onDone={() => setRoute({ name: 'operations', screen: 'forms' })}
           />
         )}
 

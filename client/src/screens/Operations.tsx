@@ -18,7 +18,7 @@ import { BarChart, ChartCard, DonutChart, LineChart } from '../components/Charts
  * stops trusting a ledger.
  */
 
-export type OpsScreen = 'hub' | 'products' | 'invoices' | 'expenses' | 'reports';
+export type OpsScreen = 'hub' | 'forms' | 'products' | 'invoices' | 'expenses' | 'reports';
 
 /* -------------------------------------------------------------- currency -- */
 
@@ -55,14 +55,39 @@ function toCents(input: string): number {
 
 /* ------------------------------------------------------------------- hub -- */
 
-const CARDS: Array<{ screen: OpsScreen; title: string; blurb: string; action: string; icon: string }> = [
-  { screen: 'products', title: 'Product Management', blurb: 'Supplies, services and retail items', action: 'Open products', icon: '◳' },
-  { screen: 'invoices', title: 'Invoice Manager', blurb: 'Patient invoices and vendor bills', action: 'Open invoices', icon: '▤' },
-  { screen: 'expenses', title: 'Expense Management', blurb: 'What the clinic spends, and on what', action: 'Open expenses', icon: '▦' },
-  { screen: 'reports', title: 'Reports & Analytics', blurb: 'How the practice is actually doing', action: 'Open reports', icon: '▥' },
+interface OpsCard {
+  screen: OpsScreen;
+  title: string;
+  blurb: string;
+  action: string;
+  icon: string;
+  /** Money is administrator-only; clinical documents are not. */
+  adminOnly: boolean;
+}
+
+const CARDS: OpsCard[] = [
+  { screen: 'forms', title: 'Generate Forms', blurb: 'Occupational health and medical reports, drafted from the record', action: 'Open forms', icon: '▤', adminOnly: false },
+  { screen: 'products', title: 'Product Management', blurb: 'Supplies, services and retail items', action: 'Open products', icon: '◳', adminOnly: true },
+  { screen: 'invoices', title: 'Invoice Manager', blurb: 'Patient invoices and vendor bills', action: 'Open invoices', icon: '▦', adminOnly: true },
+  { screen: 'expenses', title: 'Expense Management', blurb: 'What the clinic spends, and on what', action: 'Open expenses', icon: '▧', adminOnly: true },
+  { screen: 'reports', title: 'Reports & Analytics', blurb: 'How the practice is actually doing', action: 'Open reports', icon: '▥', adminOnly: true },
 ];
 
-export function OperationsHub({ onOpen }: { onOpen: (screen: OpsScreen) => void }) {
+export function OperationsHub({
+  onOpen,
+  isAdmin,
+}: {
+  onOpen: (screen: OpsScreen) => void;
+  isAdmin: boolean;
+}) {
+  /*
+   * Generating a form is clinical work — a doctor writes and signs it, and the
+   * server asks only that they are a clinician. The financial screens are the
+   * administrator's. Showing a card that leads to a 403 teaches people to
+   * distrust the navigation, so the ones they cannot open are not drawn.
+   */
+  const visible = CARDS.filter((card) => isAdmin || !card.adminOnly);
+
   return (
     <div className="stack">
       <div className="page-head">
@@ -70,7 +95,7 @@ export function OperationsHub({ onOpen }: { onOpen: (screen: OpsScreen) => void 
         <div className="sub">Running the practice, alongside treating the patients</div>
       </div>
       <div className="ops-grid">
-        {CARDS.map((card) => (
+        {visible.map((card) => (
           <button key={card.screen} className="ops-card" onClick={() => onOpen(card.screen)}>
             <span className="ops-icon" aria-hidden="true">{card.icon}</span>
             <span className="ops-title">{card.title}</span>
