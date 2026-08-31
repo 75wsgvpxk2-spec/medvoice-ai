@@ -91,6 +91,65 @@ const DESCRIBERS: Record<string, Describer> = {
    * and "declined" is precisely the entry a reviewer needs to see without
    * expanding a row.
    */
+  /*
+   * Operations. Money moving through a clinic needs the same trail the clinical
+   * record has — arguably more, since a financial entry has no second copy in
+   * anybody's memory of the consultation.
+   */
+  'POST /products': ({ body }) => {
+    const p = (body as { product?: { name?: string; kind?: string; sku?: string } }).product;
+    return {
+      summary: `Added ${p?.name ?? 'a product'} to the catalogue${p?.sku ? ` (${p.sku})` : ''}.`,
+      entityType: 'product',
+    };
+  },
+
+  'PUT /products/:id': ({ req, body }) => {
+    const p = (body as { product?: { name?: string; archived?: boolean } }).product;
+    const archived = (req.body as Record<string, unknown>)?.['archived'];
+    return {
+      summary:
+        archived === true
+          ? `Archived ${p?.name ?? 'a product'}.`
+          : `Updated ${p?.name ?? 'a product'}.`,
+      entityType: 'product',
+    };
+  },
+
+  'POST /invoices': ({ body }) => {
+    const i = (body as { invoice?: { number?: string; contactName?: string; amountCents?: number } }).invoice;
+    return {
+      summary:
+        `Raised invoice ${i?.number ?? ''} for ${i?.contactName ?? 'a contact'}` +
+        `${typeof i?.amountCents === 'number' ? ` — ${(i.amountCents / 100).toFixed(2)}` : ''}.`,
+      entityType: 'invoice',
+      detail: { number: i?.number, amountCents: i?.amountCents },
+    };
+  },
+
+  'PUT /invoices/:id/status': ({ body }) => {
+    const i = (body as { invoice?: { number?: string; status?: string; amountCents?: number } }).invoice;
+    return {
+      // The status is the whole point of the entry, so it goes in the summary
+      // rather than the detail — an auditor scanning the list wants to see
+      // "marked paid" without expanding anything.
+      summary: `Invoice ${i?.number ?? ''} marked ${i?.status ?? 'changed'}.`,
+      entityType: 'invoice',
+      detail: { number: i?.number, status: i?.status, amountCents: i?.amountCents },
+    };
+  },
+
+  'POST /expenses': ({ body }) => {
+    const e = (body as { expense?: { description?: string; amountCents?: number; category?: string } }).expense;
+    return {
+      summary:
+        `Recorded an expense — ${e?.description ?? 'unnamed'}` +
+        `${typeof e?.amountCents === 'number' ? ` (${(e.amountCents / 100).toFixed(2)})` : ''}.`,
+      entityType: 'expense',
+      detail: { category: e?.category, amountCents: e?.amountCents },
+    };
+  },
+
   'POST /alerts/:id/close': ({ req, body }) => {
     const raw = req.body as Record<string, unknown>;
     const route = String(raw?.['route'] ?? '');
@@ -236,6 +295,11 @@ function actionFor(key: string): string {
     'POST /encounters/:id/amend': 'encounter.amended',
     'POST /alerts/:id/resolve': 'alert.resolved',
     'POST /alerts/:id/close': 'alert.closed',
+    'POST /products': 'product.created',
+    'PUT /products/:id': 'product.updated',
+    'POST /invoices': 'invoice.created',
+    'PUT /invoices/:id/status': 'invoice.status',
+    'POST /expenses': 'expense.created',
     'POST /flags/:id/dismiss': 'flag.dismissed',
     'POST /orders/:id/complete': 'order.completed',
     'POST /population-run': 'population.assessed',

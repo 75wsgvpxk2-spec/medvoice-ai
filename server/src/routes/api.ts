@@ -2,6 +2,9 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import rateLimit from 'express-rate-limit';
 import { randomBytes } from 'node:crypto';
 import { config } from '../lib/config.ts';
+import { buildReports, type Period } from '../lib/reports.ts';
+import type { Product, Invoice, InvoiceLine, Expense } from '../../../shared/types.ts';
+import { EXPENSE_CATEGORIES } from '../../../shared/types.ts';
 import { readPaging, pageMeta, takePage } from '../lib/paging.ts';
 import {
   hashPassword,
@@ -28,6 +31,9 @@ import {
   audit,
   pronunciations,
   wipeClinicalData,
+  products,
+  invoices,
+  expenses,
 } from '../db/repositories.ts';
 import { seed as seedDemoPopulation } from '../db/seed.ts';
 import * as runtime from '../lib/settings.ts';
@@ -300,6 +306,7 @@ api.post('/auth/signup', (req, res) => {
   clinic.save({
     name: clinicName,
     legalName: clinicName,
+    currency: 'USD',
     registration: '',
     address: '',
     phone: '',
@@ -521,10 +528,21 @@ api.put('/clinic', requireClinician, requireAdmin, (req, res) => {
     return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : fallback;
   };
 
+  /*
+   * ISO 4217: three letters, nothing else. The code is used to format every
+   * amount in Operations, and free text there produces either a broken
+   * Intl.NumberFormat or a currency symbol nobody recognises.
+   */
+  const currency = (): string => {
+    const value = text('currency').toUpperCase();
+    return /^[A-Z]{3}$/.test(value) ? value : 'USD';
+  };
+
   res.json({
     clinic: clinic.save({
       name: text('name'),
       legalName: text('legalName'),
+      currency: currency(),
       registration: text('registration'),
       address: text('address'),
       phone: text('phone'),
@@ -2015,6 +2033,282 @@ api.post('/auth/password', requireClinician, (req: AuthedRequest, res) => {
     maxAge: runtime.sessionHours() * 60 * 60 * 1000,
   });
   res.json({ ok: true });
+});
+
+/* ------------------------------------------------------------ operations -- */
+
+/**
+ * Running the practice: catalogue, invoices, expenses, and the reports built
+ * from them. Admin-only — this is money, and the clinician role exists to reach
+ * clinical work rather than the ledger.
+ *
+ * Amounts arrive and leave as integer cents. The client formats once, against
+ * the clinic's currency; nothing here ever sees a float.
+ */
+
+/** Reject anything that is not a whole, non-negative number of cents. */
+function cents(value: unknown, field: string): number {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n) || n < 0) throw new Error(`Enter a valid amount for ${field}.`);
+  // Roughly ten million in any currency — a typo, not a clinic invoice.
+  if (n > 1_000_000_000) throw new Error(`That amount for ${field} looks wrong.`);
+  return n;
+}
+
+function text(value: unknown, max = 200): string {
+  return String(value ?? '').trim().slice(0, max);
+}
+
+/** ISO date, defaulting to today rather than failing on an empty field. */
+function isoDate(value: unknown): string {
+  const raw = text(value, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : new Date().toISOString().slice(0, 10);
+}
+
+api.get('/products', requireClinician, requireAdmin, (req, res) => {
+  const { page, pageSize } = readPaging(req.query, 20);
+  const found = products.page({
+    search: String(req.query['search'] ?? '').trim() || undefined,
+    kind: String(req.query['kind'] ?? '').trim() || undefined,
+    includeArchived: req.query['archived'] === 'true',
+    page,
+    pageSize,
+  });
+  res.json({ products: found.items, ...pageMeta(found.total, page, pageSize), lowStock: products.lowStock() });
+});
+
+api.post('/products', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const body = req.body as Record<string, unknown>;
+  const name = text(body['name']);
+  if (!name) {
+    res.status(400).json({ error: 'Enter a name for the product.' });
+    return;
+  }
+  const kind = ['supply', 'service', 'retail'].includes(String(body['kind']))
+    ? (String(body['kind']) as Product['kind'])
+    : 'supply';
+
+  try {
+    const stamp = new Date().toISOString();
+    const product: Product = {
+      id: id('prd'),
+      name,
+      sku: text(body['sku'], 60),
+      barcode: text(body['barcode'], 60),
+      kind,
+      category: text(body['category'], 60),
+      priceCents: cents(body['priceCents'] ?? 0, 'price'),
+      // A service has no stock to run out of.
+      stock: kind === 'service' ? 0 : Math.max(0, Math.round(Number(body['stock'] ?? 0)) || 0),
+      reorderPoint: kind === 'service' ? 0 : Math.max(0, Math.round(Number(body['reorderPoint'] ?? 0)) || 0),
+      archived: false,
+      createdAt: stamp,
+      updatedAt: stamp,
+    };
+    products.insert(product);
+    res.json({ product });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'The product could not be saved.' });
+  }
+});
+
+api.put('/products/:id', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const existing = products.byId(param(req, 'id'));
+  if (!existing) {
+    res.status(404).json({ error: 'That product no longer exists.' });
+    return;
+  }
+  const body = req.body as Record<string, unknown>;
+  const patch: Partial<Product> = {};
+  if (body['name'] !== undefined) patch.name = text(body['name']);
+  if (body['sku'] !== undefined) patch.sku = text(body['sku'], 60);
+  if (body['barcode'] !== undefined) patch.barcode = text(body['barcode'], 60);
+  if (body['category'] !== undefined) patch.category = text(body['category'], 60);
+  if (body['stock'] !== undefined) patch.stock = Math.max(0, Math.round(Number(body['stock'])) || 0);
+  if (body['reorderPoint'] !== undefined) {
+    patch.reorderPoint = Math.max(0, Math.round(Number(body['reorderPoint'])) || 0);
+  }
+  // Archiving rather than deleting: a product that vanishes takes the history
+  // of every invoice line that referenced it with it.
+  if (body['archived'] !== undefined) patch.archived = Boolean(body['archived']);
+
+  try {
+    if (body['priceCents'] !== undefined) patch.priceCents = cents(body['priceCents'], 'price');
+    products.update(existing.id, patch);
+    res.json({ product: products.byId(existing.id) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'The product could not be saved.' });
+  }
+});
+
+api.get('/invoices', requireClinician, requireAdmin, (req, res) => {
+  const { page, pageSize } = readPaging(req.query, 20);
+  const found = invoices.page({
+    search: String(req.query['search'] ?? '').trim() || undefined,
+    kind: String(req.query['kind'] ?? '').trim() || undefined,
+    status: String(req.query['status'] ?? '').trim() || undefined,
+    page,
+    pageSize,
+  });
+  res.json({
+    invoices: found.items,
+    ...pageMeta(found.total, page, pageSize),
+    summary: invoices.summary(),
+    nextNumber: invoices.nextNumber(),
+  });
+});
+
+api.get('/invoices/:id', requireClinician, requireAdmin, (req, res) => {
+  const invoice = invoices.byId(param(req, 'id'));
+  if (!invoice) {
+    res.status(404).json({ error: 'That invoice no longer exists.' });
+    return;
+  }
+  res.json({ invoice });
+});
+
+/**
+ * Billing entries for a patient that have not been invoiced yet.
+ *
+ * The clinical side already records what was done and why. Retyping it into an
+ * invoice is how a line ends up saying something the record does not.
+ */
+api.get('/patients/:id/billable', requireClinician, requireAdmin, (req, res) => {
+  const patient = patients.byId(param(req, 'id'));
+  if (!patient) {
+    res.status(404).json({ error: 'That patient is not in your population.' });
+    return;
+  }
+  const invoiced = new Set(
+    (db().prepare('SELECT billing_entry_id FROM invoice_line WHERE billing_entry_id IS NOT NULL').all() as Array<{
+      billing_entry_id: string;
+    }>).map((r) => r.billing_entry_id),
+  );
+  res.json({ entries: billing.forPatient(patient.id).filter((b) => !invoiced.has(b.id)) });
+});
+
+api.post('/invoices', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const body = req.body as Record<string, unknown>;
+  const kind = body['kind'] === 'vendor' ? 'vendor' : 'patient';
+  const contactName = text(body['contactName'], 120);
+  if (!contactName) {
+    res.status(400).json({ error: 'Enter who this invoice is for.' });
+    return;
+  }
+
+  const rawLines = Array.isArray(body['lines']) ? (body['lines'] as Array<Record<string, unknown>>) : [];
+  if (rawLines.length === 0) {
+    res.status(400).json({ error: 'An invoice needs at least one line.' });
+    return;
+  }
+
+  try {
+    const lines: InvoiceLine[] = rawLines.map((line) => ({
+      id: id('inl'),
+      invoiceId: '',
+      productId: text(line['productId'], 40) || null,
+      billingEntryId: text(line['billingEntryId'], 40) || null,
+      description: text(line['description'], 200) || 'Item',
+      quantity: Math.max(1, Math.round(Number(line['quantity'] ?? 1)) || 1),
+      unitPriceCents: cents(line['unitPriceCents'] ?? 0, 'a line'),
+    }));
+
+    // The total is the sum of the lines, never a figure typed alongside them —
+    // a header that disagrees with its own detail is the classic ledger bug.
+    const amountCents = lines.reduce((sum, l) => sum + l.quantity * l.unitPriceCents, 0);
+    const issuedOn = isoDate(body['issuedOn']);
+    const stamp = new Date().toISOString();
+
+    const invoice: Invoice = {
+      id: id('inv'),
+      number: invoices.nextNumber(),
+      kind,
+      contactName,
+      patientId: text(body['patientId'], 40) || null,
+      issuedOn,
+      dueOn: isoDate(body['dueOn'] ?? issuedOn),
+      paidOn: null,
+      amountCents,
+      status: body['status'] === 'sent' ? 'sent' : 'draft',
+      overdue: false,
+      notes: text(body['notes'], 500),
+      createdAt: stamp,
+      updatedAt: stamp,
+    };
+
+    invoices.insert(invoice, lines);
+    res.json({ invoice: invoices.byId(invoice.id) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'The invoice could not be saved.' });
+  }
+});
+
+api.put('/invoices/:id/status', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const invoice = invoices.byId(param(req, 'id'));
+  if (!invoice) {
+    res.status(404).json({ error: 'That invoice no longer exists.' });
+    return;
+  }
+  const status = String((req.body as Record<string, unknown>)['status'] ?? '');
+  if (!['draft', 'sent', 'paid', 'void'].includes(status)) {
+    res.status(400).json({ error: 'Choose draft, sent, paid or void.' });
+    return;
+  }
+  if (invoice.status === 'paid' && status !== 'void') {
+    res.status(400).json({ error: 'A paid invoice can only be voided, not reopened.' });
+    return;
+  }
+
+  const paidOn = status === 'paid' ? new Date().toISOString().slice(0, 10) : null;
+  invoices.setStatus(invoice.id, status as Invoice['status'], paidOn);
+  res.json({ invoice: invoices.byId(invoice.id) });
+});
+
+api.get('/expenses', requireClinician, requireAdmin, (req, res) => {
+  const { page, pageSize } = readPaging(req.query, 20);
+  const found = expenses.page({
+    search: String(req.query['search'] ?? '').trim() || undefined,
+    category: String(req.query['category'] ?? '').trim() || undefined,
+    page,
+    pageSize,
+  });
+  res.json({ expenses: found.items, ...pageMeta(found.total, page, pageSize), summary: expenses.summary() });
+});
+
+api.post('/expenses', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const body = req.body as Record<string, unknown>;
+  const description = text(body['description']);
+  if (!description) {
+    res.status(400).json({ error: 'Enter what the expense was for.' });
+    return;
+  }
+  try {
+    const stamp = new Date().toISOString();
+    const expense: Expense = {
+      id: id('exp'),
+      incurredOn: isoDate(body['incurredOn']),
+      description,
+      category: EXPENSE_CATEGORIES.some((c) => c.value === body['category'])
+        ? (body['category'] as Expense['category'])
+        : 'other',
+      reference: text(body['reference'], 60),
+      amountCents: cents(body['amountCents'] ?? 0, 'the expense'),
+      createdAt: stamp,
+      updatedAt: stamp,
+    };
+    expenses.insert(expense);
+    res.json({ expense });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'The expense could not be saved.' });
+  }
+});
+
+api.get('/reports', requireClinician, requireAdmin, (req, res) => {
+  const asked = String(req.query['period'] ?? 'this_month');
+  const period = (['this_month', 'last_month', 'this_quarter', 'this_year', 'all_time'].includes(asked)
+    ? asked
+    : 'this_month') as Period;
+  res.json(buildReports(period));
 });
 
 /* ------------------------------------------------------------ audit log -- */

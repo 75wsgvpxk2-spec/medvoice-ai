@@ -53,6 +53,11 @@ function migrate(conn: Database.Database): void {
     // Added with the manual close routes. No CHECK here: ALTER TABLE ADD COLUMN
     // cannot carry one in SQLite, and the route is written only by code that
     // already constrains it.
+    // 'New patients this period' needs to know when somebody joined.
+    // last_assessed_at is when they were last looked at, which is a
+    // different question and answers this one wrongly.
+    ['patient', 'created_at', 'TEXT'],
+    ['clinic', 'currency', "TEXT NOT NULL DEFAULT 'USD'"],
     ['documentation_alert', 'resolution_route', 'TEXT'],
     ['documentation_alert', 'resolution_note', 'TEXT'],
   ];
@@ -65,6 +70,16 @@ function migrate(conn: Database.Database): void {
   // An installation that predates roles has one account, and it is the person
   // who set the clinic up. Leaving them a plain clinician would lock everyone
   // out of user management on the very upgrade that introduces it.
+  // Rows that predate the column get the earliest date the record can evidence,
+  // rather than today — which would report the whole population as new.
+  conn.exec(
+    `UPDATE patient SET created_at = COALESCE(
+       (SELECT MIN(date) FROM encounter e WHERE e.patient_id = patient.id),
+       last_assessed_at,
+       '1970-01-01'
+     ) WHERE created_at IS NULL`,
+  );
+
   const admins = conn.prepare("SELECT COUNT(*) AS n FROM clinician WHERE role = 'admin'").get() as {
     n: number;
   };

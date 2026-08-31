@@ -2361,3 +2361,149 @@ tbody tr:hover { background: var(--brand-wash); }
 .facts dd {
   overflow-wrap: anywhere;
 }
+
+/* Operations ---------------------------------------------------------------
+   The practice-management side. Deliberately the same visual language as the
+   clinical screens — a clinic manager and a clinician are often the same
+   person, and two products stitched together is exactly how it should not
+   feel. Urgency colour still means urgency: money uses brand and neutral
+   tones, never the red reserved for a patient in trouble. */
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--gap-4);
+}
+
+.ops-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--gap-2);
+  padding: var(--gap-5);
+  min-height: 180px;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.ops-card:hover:not(:disabled) {
+  border-color: var(--brand-line);
+  background: var(--brand-wash);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+
+.ops-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius);
+  background: var(--brand-wash);
+  color: var(--brand-deep);
+  font-size: var(--text-xl);
+}
+
+.ops-title { font-weight: 650; font-size: var(--text-lg); }
+.ops-blurb { color: var(--ink-muted); font-size: var(--text-sm); flex: 1; }
+.ops-action { color: var(--brand-deep); font-weight: 600; font-size: var(--text-sm); }
+
+/* Tabs — the segmented control on products, invoices and reports. */
+.tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+  flex-wrap: wrap;
+}
+
+.tab {
+  min-height: 34px;
+  padding: 0 var(--gap-4);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink-secondary);
+}
+
+.tab.active,
+.tab.active:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  box-shadow: var(--shadow-xs);
+}
+
+/* Tables. Wide financial tables scroll inside their own container so the page
+   itself never scrolls sideways. */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+.table-wrap table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.table-wrap th,
+.table-wrap td { padding: var(--gap-3) var(--gap-4); text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.table-wrap th { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-muted); font-weight: 600; }
+.table-wrap tr:last-child td { border-bottom: 0; }
+.table-wrap .right { text-align: right; }
+.table-wrap .muted-row { opacity: 0.55; }
+
+.chip {
+  display: inline-block;
+  padding: 2px var(--gap-2);
+  margin-left: var(--gap-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  font-size: var(--text-xs);
+  text-transform: capitalize;
+}
+
+.chip-ok { background: var(--managed-ground); border-color: var(--managed-line); color: var(--managed-ink); }
+.chip-warn { background: var(--watch-ground); border-color: var(--watch-line); color: var(--watch-ink); }
+.chip-crit { background: var(--critical-ground); border-color: var(--critical-line); color: var(--critical-ink); }
+
+/* Invoice dialog lines */
+.line-row { margin-bottom: var(--gap-2); align-items: center; }
+.line-total { min-width: 90px; text-align: right; color: var(--ink-muted); }
+.invoice-total {
+  padding-top: var(--gap-3);
+  border-top: 1px solid var(--line-strong);
+  font-size: var(--text-lg);
+}
+
+/* Charts */
+.report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--gap-4); }
+.chart-card h3 { font-size: var(--text-base); font-weight: 650; }
+.chart { width: 100%; height: auto; overflow: visible; }
+.chart-tick { fill: var(--ink-muted); font-size: 10px; font-family: var(--font-ui); }
+.chart-empty { padding: var(--gap-6); text-align: center; color: var(--ink-muted); font-size: var(--text-sm); }
+
+.donut-wrap { display: flex; gap: var(--gap-4); align-items: center; flex-wrap: wrap; }
+.donut { max-width: 190px; }
+.donut-total { fill: var(--ink); font-size: 22px; font-weight: 700; font-family: var(--font-ui); }
+
+.chart-legend { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--gap-2); flex: 1; min-width: 150px; font-size: var(--text-sm); }
+.chart-legend li { display: flex; align-items: center; gap: var(--gap-2); }
+.chart-legend .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.chart-legend .legend-value { margin-left: auto; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+
+.bars { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--gap-3); }
+.bars li { display: grid; grid-template-columns: minmax(140px, 34%) 1fr auto; gap: var(--gap-3); align-items: center; font-size: var(--text-sm); }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-secondary); }
+.bar-track { background: var(--surface-sunken); border-radius: var(--radius-pill); height: 10px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; border-radius: var(--radius-pill); }
+.bar-value { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.big-number { text-align: center; padding: var(--gap-4) 0; }
+.big-number .n { font-size: var(--text-3xl); font-weight: 700; font-variant-numeric: tabular-nums; display: block; }
+
+@media (max-width: 720px) {
+  .ops-grid { grid-template-columns: 1fr 1fr; }
+  .report-grid { grid-template-columns: 1fr; }
+}

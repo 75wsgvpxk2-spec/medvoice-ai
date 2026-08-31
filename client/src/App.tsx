@@ -16,6 +16,7 @@ import { ChangePassword } from './screens/Users';
 import { Flags } from './screens/Flags';
 import { Settings } from './screens/Settings';
 import { Audit } from './screens/Audit';
+import { OperationsHub, Products, Invoices, Expenses, Reports, type OpsScreen } from './screens/Operations';
 import type { Clinic } from '../../shared/types';
 
 type Route =
@@ -29,7 +30,8 @@ type Route =
   | { name: 'audit' }
   | { name: 'settings' }
   | { name: 'clinic' }
-  | { name: 'activity' };
+  | { name: 'activity' }
+  | { name: 'operations'; screen: OpsScreen };
 
 export function App() {
   const [clinician, setClinician] = useState<Clinician | null>(null);
@@ -301,6 +303,14 @@ export function App() {
             active={route.name === 'audit'}
             onClick={() => setRoute({ name: 'audit' })}
           />
+          {clinician.role === 'admin' && (
+            <NavItem
+              label="Operations"
+              icon={<IconOperations />}
+              active={route.name === 'operations'}
+              onClick={() => setRoute({ name: 'operations', screen: 'hub' })}
+            />
+          )}
           <NavItem
             label="Settings"
             icon={<IconSettings />}
@@ -450,6 +460,18 @@ export function App() {
           <Audit onOpenPatient={(patientId) => setRoute({ name: 'patient', patientId })} />
         )}
 
+        {route.name === 'operations' && (() => {
+          const back = () => setRoute({ name: 'operations', screen: 'hub' });
+          switch (route.screen) {
+            case 'products': return <Products clinic={clinic} onBack={back} />;
+            case 'invoices': return <Invoices clinic={clinic} onBack={back} />;
+            case 'expenses': return <Expenses clinic={clinic} onBack={back} />;
+            case 'reports': return <Reports clinic={clinic} onBack={back} />;
+            default:
+              return <OperationsHub onOpen={(screen) => setRoute({ name: 'operations', screen })} />;
+          }
+        })()}
+
         {route.name === 'settings' && <Settings clinician={clinician} />}
 
         {route.name === 'clinic' && (
@@ -519,6 +541,15 @@ const IconDashboard = () => (
     <rect x="14" y="3" width="7" height="5" rx="1.5" />
     <rect x="14" y="12" width="7" height="9" rx="1.5" />
     <rect x="3" y="16" width="7" height="5" rx="1.5" />
+  </svg>
+);
+
+/* A box on a base — supplies and stock, the least clinical thing in the nav. */
+const IconOperations = () => (
+  <svg {...svg}>
+    <path d="M3 7l9-4 9 4v10l-9 4-9-4z" />
+    <path d="M3 7l9 4 9-4" />
+    <line x1="12" y1="11" x2="12" y2="21" />
   </svg>
 );
 

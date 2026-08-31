@@ -20,6 +20,11 @@ import type {
   ClinicSettings,
   AuditEvent,
   Pronunciation,
+  Product,
+  Invoice,
+  Expense,
+  InvoiceSummary,
+  ExpenseSummary,
 } from '../../shared/types';
 
 export class ApiError extends Error {
@@ -244,6 +249,60 @@ export interface SettingsView {
   activeProvider: 'anthropic' | 'compatible' | 'deterministic';
 }
 
+/* ------------------------------------------------------------ operations -- */
+
+export interface Paged {
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface ProductPage extends Paged {
+  products: Product[];
+  /** Items at or below their reorder point, across the whole catalogue. */
+  lowStock: Product[];
+}
+
+export interface InvoicePage extends Paged {
+  invoices: Invoice[];
+  summary: InvoiceSummary;
+  nextNumber: string;
+}
+
+export interface ExpensePage extends Paged {
+  expenses: Expense[];
+  summary: ExpenseSummary;
+}
+
+export interface ReportsView {
+  range: { from: string; to: string; label: string };
+  headline: {
+    revenueCents: number;
+    collectedRatio: number;
+    activePatients: number;
+    newPatients: number;
+    encounters: number;
+    taskCompletion: number;
+  };
+  revenueTrend: Array<{ month: string; cents: number }>;
+  expenseBreakdown: Array<{ category: string; cents: number }>;
+  collections: { collectedCents: number; outstandingCents: number };
+  topServices: Array<{ description: string; cents: number }>;
+  operational: {
+    ordersOutstanding: number;
+    ordersCompleted: number;
+    lowStock: number;
+    unbilledEntries: number;
+  };
+  clinical: {
+    flagsRaised: number;
+    flagsResolved: number;
+    gapsOpen: number;
+    byUrgency: Record<string, number>;
+  };
+}
+
 export interface AuditView {
   events: AuditEvent[];
   actions: string[];
@@ -358,6 +417,73 @@ export const api = {
     post<{ newEncounterId: string; version: number }>(`/encounters/${encounterId}/amend`, { edits }),
 
   previewResolution: (alertId: string) => request<ResolutionPreview>(`/alerts/${alertId}/preview`),
+  /* ---------------------------------------------------------- operations -- */
+
+  products: (params: { search?: string; kind?: string; archived?: boolean; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.search) q.set('search', params.search);
+    if (params.kind) q.set('kind', params.kind);
+    if (params.archived) q.set('archived', 'true');
+    q.set('page', String(params.page ?? 1));
+    if (params.pageSize) q.set('pageSize', String(params.pageSize));
+    return request<ProductPage>(`/products?${q.toString()}`);
+  },
+
+  createProduct: (input: Partial<Product>) => post<{ product: Product }>('/products', input),
+  updateProduct: (productId: string, patch: Partial<Product>) =>
+    put<{ product: Product }>(`/products/${productId}`, patch),
+
+  invoices: (params: { search?: string; kind?: string; status?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.search) q.set('search', params.search);
+    if (params.kind) q.set('kind', params.kind);
+    if (params.status) q.set('status', params.status);
+    q.set('page', String(params.page ?? 1));
+    if (params.pageSize) q.set('pageSize', String(params.pageSize));
+    return request<InvoicePage>(`/invoices?${q.toString()}`);
+  },
+
+  invoice: (invoiceId: string) => request<{ invoice: Invoice }>(`/invoices/${invoiceId}`),
+
+  /** Clinical work already recorded for a patient and not yet on an invoice. */
+  billable: (patientId: string) =>
+    request<{ entries: Array<{ id: string; code: string; description: string }> }>(
+      `/patients/${patientId}/billable`,
+    ),
+
+  createInvoice: (input: {
+    kind: 'patient' | 'vendor';
+    contactName: string;
+    patientId?: string | null;
+    issuedOn?: string;
+    dueOn?: string;
+    status?: 'draft' | 'sent';
+    notes?: string;
+    lines: Array<{
+      description: string;
+      quantity: number;
+      unitPriceCents: number;
+      productId?: string | null;
+      billingEntryId?: string | null;
+    }>;
+  }) => post<{ invoice: Invoice }>('/invoices', input),
+
+  setInvoiceStatus: (invoiceId: string, status: 'draft' | 'sent' | 'paid' | 'void') =>
+    put<{ invoice: Invoice }>(`/invoices/${invoiceId}/status`, { status }),
+
+  expenses: (params: { search?: string; category?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.search) q.set('search', params.search);
+    if (params.category) q.set('category', params.category);
+    q.set('page', String(params.page ?? 1));
+    if (params.pageSize) q.set('pageSize', String(params.pageSize));
+    return request<ExpensePage>(`/expenses?${q.toString()}`);
+  },
+
+  createExpense: (input: Partial<Expense>) => post<{ expense: Expense }>('/expenses', input),
+
+  reports: (period: string) => request<ReportsView>(`/reports?period=${encodeURIComponent(period)}`),
+
   resolveAlert: (alertId: string) => post<ResolutionOutcome>(`/alerts/${alertId}/resolve`),
 
   /** Close a gap the system will not action: already done, or declined. */

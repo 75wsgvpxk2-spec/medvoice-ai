@@ -5,6 +5,14 @@ Notable changes. Dates are the day the work landed on `main`.
 ## Unreleased
 
 ### Added
+- **Operations.** Four administrator-only screens for running the practice
+  rather than treating the patients: a product catalogue with stock and reorder
+  points, invoices for patients and vendors, expenses, and reports built from
+  all three. Every amount is stored and summed in integer cents, so a total
+  always equals its own lines. A patient invoice can draw its lines from the
+  billing entries clinical work already recorded, and the reports surface the
+  number a generic ledger cannot — recorded work that no invoice refers to.
+  Charts are hand-rolled SVG; no charting dependency was added.
 - **Documentation gaps can be closed by hand.** A gap can be true and still not
   be the system's to action — the test was done at another clinic, the order
   went in on paper, the patient declined it. Alongside the automatic resolution

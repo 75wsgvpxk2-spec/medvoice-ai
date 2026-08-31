@@ -131,6 +131,8 @@ async function main(): Promise<void> {
   clinicRepo.save({
     name: clinicName,
     legalName: clinicName,
+    // Changeable in Clinic profile; USD is only the starting point.
+    currency: 'USD',
     registration: '',
     address: '',
     phone: '',

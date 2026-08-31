@@ -9,6 +9,7 @@ import { Logo } from '../components/Logo';
 const BLANK: Omit<Clinic, 'updatedAt'> = {
   name: '',
   legalName: '',
+  currency: 'USD',
   registration: '',
   address: '',
   phone: '',

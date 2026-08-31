@@ -390,6 +390,13 @@ export interface Clinician {
 export interface Clinic {
   name: string;
   legalName: string;
+  /**
+   * ISO 4217 code used to format every amount in Operations.
+   *
+   * Caribbean clinics bill in XCD, JMD, TTD, BBD and USD among others, so the
+   * currency is the clinic's to state rather than something the code assumes.
+   */
+  currency: string;
   registration: string;
   address: string;
   phone: string;
@@ -784,4 +791,133 @@ export interface AutomationView {
   config: AutomationConfig;
   /** Null for event-driven automations, and when disabled. */
   nextRunAt: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Operations — running the practice, as opposed to treating the patients
+// ---------------------------------------------------------------------------
+
+/**
+ * Money crosses the wire in integer minor units, never as a float.
+ *
+ * Invoice totals are sums of line items, and repeated float arithmetic drifts.
+ * A clinic that finds a total a cent out stops trusting the ledger, so the
+ * arithmetic is done in whole cents and formatted once at the edge.
+ */
+export type Cents = number;
+
+export type ProductKind = 'supply' | 'service' | 'retail';
+
+export const PRODUCT_KINDS: Array<{ value: ProductKind; label: string }> = [
+  { value: 'supply', label: 'Supplies' },
+  { value: 'service', label: 'Services' },
+  { value: 'retail', label: 'Retail' },
+];
+
+export interface Product {
+  id: string;
+  name: string;
+  sku: string;
+  barcode: string;
+  kind: ProductKind;
+  category: string;
+  priceCents: Cents;
+  stock: number;
+  /** Below this the item reports low. 0 disables the warning. */
+  reorderPoint: number;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type InvoiceKind = 'patient' | 'vendor';
+
+/** Stored statuses. `overdue` is derived from the due date, never stored. */
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'void';
+
+/** What a screen shows, which includes the derived state. */
+export type InvoiceState = InvoiceStatus | 'overdue';
+
+export const INVOICE_STATUSES: Array<{ value: InvoiceState; label: string }> = [
+  { value: 'draft', label: 'Draft' },
+  { value: 'sent', label: 'Sent' },
+  { value: 'overdue', label: 'Overdue' },
+  { value: 'paid', label: 'Paid' },
+  { value: 'void', label: 'Void' },
+];
+
+export interface InvoiceLine {
+  id: string;
+  invoiceId: string;
+  productId: string | null;
+  /** Set when the line came from clinical work already on the record. */
+  billingEntryId: string | null;
+  description: string;
+  quantity: number;
+  unitPriceCents: Cents;
+}
+
+export interface Invoice {
+  id: string;
+  number: string;
+  kind: InvoiceKind;
+  contactName: string;
+  patientId: string | null;
+  issuedOn: string;
+  dueOn: string;
+  paidOn: string | null;
+  amountCents: Cents;
+  status: InvoiceStatus;
+  /** Derived: sent, unpaid, and past its due date. */
+  overdue: boolean;
+  notes: string;
+  lines?: InvoiceLine[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ExpenseCategory =
+  | 'supplies'
+  | 'salaries'
+  | 'rent'
+  | 'utilities'
+  | 'equipment'
+  | 'insurance'
+  | 'services'
+  | 'other';
+
+export const EXPENSE_CATEGORIES: Array<{ value: ExpenseCategory; label: string }> = [
+  { value: 'supplies', label: 'Medical supplies' },
+  { value: 'salaries', label: 'Salaries' },
+  { value: 'rent', label: 'Rent' },
+  { value: 'utilities', label: 'Utilities' },
+  { value: 'equipment', label: 'Equipment' },
+  { value: 'insurance', label: 'Insurance' },
+  { value: 'services', label: 'Professional services' },
+  { value: 'other', label: 'Other' },
+];
+
+export interface Expense {
+  id: string;
+  incurredOn: string;
+  description: string;
+  category: ExpenseCategory;
+  reference: string;
+  amountCents: Cents;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvoiceSummary {
+  outstandingCents: Cents;
+  overdueCount: number;
+  overdueCents: Cents;
+  collectedThisMonthCents: Cents;
+}
+
+export interface ExpenseSummary {
+  thisMonthCents: Cents;
+  thisMonthCount: number;
+  thisYearCents: Cents;
+  totalCount: number;
 }

@@ -24,6 +24,12 @@ import type {
   PatientProfile,
   AuditEvent,
   Pronunciation,
+  Product,
+  Invoice,
+  InvoiceLine,
+  Expense,
+  InvoiceSummary,
+  ExpenseSummary,
 } from '../../../shared/types.ts';
 import { EMPTY_PROFILE, DEFAULT_BRAND } from '../../../shared/types.ts';
 
@@ -335,6 +341,7 @@ function toClinician(r: Row): Clinician {
 const EMPTY_CLINIC: Clinic = {
   name: '',
   legalName: '',
+  currency: 'USD',
   registration: '',
   address: '',
   phone: '',
@@ -353,6 +360,7 @@ export const clinic = {
     return {
       name: (r['name'] as string) ?? '',
       legalName: (r['legal_name'] as string) ?? '',
+      currency: (r['currency'] as string) || 'USD',
       registration: (r['registration'] as string) ?? '',
       address: (r['address'] as string) ?? '',
       phone: (r['phone'] as string) ?? '',
@@ -369,11 +377,12 @@ export const clinic = {
   save(input: Omit<Clinic, 'updatedAt'>): Clinic {
     db()
       .prepare(
-        `INSERT INTO clinic (id, name, legal_name, registration, address, phone, email, website, logo,
+        `INSERT INTO clinic (id, name, legal_name, currency, registration, address, phone, email, website, logo,
                               brand_dark, brand_light, primary_doctor, updated_at)
-         VALUES ('clinic',?,?,?,?,?,?,?,?,?,?,?,?)
+         VALUES ('clinic',?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name, legal_name = excluded.legal_name,
+           currency = excluded.currency,
            registration = excluded.registration, address = excluded.address,
            phone = excluded.phone, email = excluded.email,
            website = excluded.website, logo = excluded.logo,
@@ -384,6 +393,7 @@ export const clinic = {
       .run(
         input.name,
         input.legalName,
+        input.currency || 'USD',
         input.registration,
         input.address,
         input.phone,
@@ -439,8 +449,8 @@ export const patients = {
       .prepare(
         `INSERT INTO patient
            (id, name, age, sex, conditions, medications, allergies, clinician_id,
-            status, queue_position, last_assessed_at, profile)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+            status, queue_position, last_assessed_at, profile, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         p.id,
@@ -455,6 +465,9 @@ export const patients = {
         p.queuePosition,
         p.lastAssessedAt,
         toJson(p.profile ?? EMPTY_PROFILE),
+        // When they joined the population, which is not the same question as
+        // when they were last assessed.
+        now(),
       );
   },
 
@@ -1443,3 +1456,378 @@ export function wipeClinicalData(): { removed: Record<string, number> } {
 
   return { removed };
 }
+
+/* ------------------------------------------------------------ operations -- */
+
+/**
+ * Today, as an ISO date. Kept here so every operations query agrees on what
+ * "this month" and "overdue" mean within a single request.
+ */
+function today(): string {
+  return now().slice(0, 10);
+}
+
+function toProduct(r: Row): Product {
+  return {
+    id: r['id'] as string,
+    name: r['name'] as string,
+    sku: r['sku'] as string,
+    barcode: r['barcode'] as string,
+    kind: r['kind'] as Product['kind'],
+    category: r['category'] as string,
+    priceCents: r['price_cents'] as number,
+    stock: r['stock'] as number,
+    reorderPoint: r['reorder_point'] as number,
+    archived: toBool(r['archived'] as number),
+    createdAt: r['created_at'] as string,
+    updatedAt: r['updated_at'] as string,
+  };
+}
+
+export const products = {
+  /**
+   * Filter and sort the whole catalogue, then take a page from the result.
+   *
+   * Same rule as every other list in this codebase: paging before filtering
+   * gives a search that only ever finds what happened to be on screen.
+   */
+  page(options: {
+    search?: string;
+    kind?: string;
+    includeArchived?: boolean;
+    page: number;
+    pageSize: number;
+  }): { items: Product[]; total: number } {
+    const where: string[] = [];
+    const args: unknown[] = [];
+
+    if (!options.includeArchived) where.push('archived = 0');
+    if (options.kind) {
+      where.push('kind = ?');
+      args.push(options.kind);
+    }
+    if (options.search) {
+      // Everything the table displays, so what is readable is searchable.
+      const columns = ['name', 'sku', 'barcode', 'category'];
+      where.push(`(${columns.map((c) => `COALESCE(${c}, '') LIKE ?`).join(' OR ')})`);
+      const like = `%${options.search}%`;
+      args.push(...columns.map(() => like));
+    }
+
+    const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const counted = db().prepare(`SELECT COUNT(*) AS n FROM product ${clause}`).get(...args) as Row;
+    const total = (counted['n'] as number) ?? 0;
+
+    // Clamped against the count before it reaches OFFSET — a page number the
+    // query cannot fill renders as "page 4 of 4" above an empty table.
+    const { page } = pageMeta(total, options.page, options.pageSize);
+    const rows = db()
+      .prepare(`SELECT * FROM product ${clause} ORDER BY archived, name COLLATE NOCASE LIMIT ? OFFSET ?`)
+      .all(...args, options.pageSize, (page - 1) * options.pageSize) as Row[];
+
+    return { items: rows.map(toProduct), total };
+  },
+
+  byId(productId: string): Product | null {
+    const r = db().prepare('SELECT * FROM product WHERE id = ?').get(productId) as Row | undefined;
+    return r ? toProduct(r) : null;
+  },
+
+  /** Items at or below their reorder point. Services are never low. */
+  lowStock(): Product[] {
+    return (
+      db()
+        .prepare(
+          `SELECT * FROM product
+            WHERE archived = 0 AND kind <> 'service'
+              AND reorder_point > 0 AND stock <= reorder_point
+            ORDER BY stock - reorder_point`,
+        )
+        .all() as Row[]
+    ).map(toProduct);
+  },
+
+  insert(p: Product): void {
+    db()
+      .prepare(
+        `INSERT INTO product
+           (id, name, sku, barcode, kind, category, price_cents, stock,
+            reorder_point, archived, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        p.id, p.name, p.sku, p.barcode, p.kind, p.category, p.priceCents,
+        p.stock, p.reorderPoint, p.archived ? 1 : 0, p.createdAt, p.updatedAt,
+      );
+  },
+
+  update(productId: string, patch: Partial<Product>): void {
+    const current = products.byId(productId);
+    if (!current) return;
+    const next = { ...current, ...patch };
+    db()
+      .prepare(
+        `UPDATE product SET name=?, sku=?, barcode=?, kind=?, category=?,
+                price_cents=?, stock=?, reorder_point=?, archived=?, updated_at=?
+          WHERE id = ?`,
+      )
+      .run(
+        next.name, next.sku, next.barcode, next.kind, next.category,
+        next.priceCents, next.stock, next.reorderPoint, next.archived ? 1 : 0,
+        now(), productId,
+      );
+  },
+};
+
+function toInvoiceLine(r: Row): InvoiceLine {
+  return {
+    id: r['id'] as string,
+    invoiceId: r['invoice_id'] as string,
+    productId: (r['product_id'] as string | null) ?? null,
+    billingEntryId: (r['billing_entry_id'] as string | null) ?? null,
+    description: r['description'] as string,
+    quantity: r['quantity'] as number,
+    unitPriceCents: r['unit_price_cents'] as number,
+  };
+}
+
+function toInvoice(r: Row, asOf: string): Invoice {
+  const status = r['status'] as Invoice['status'];
+  const dueOn = r['due_on'] as string;
+  return {
+    id: r['id'] as string,
+    number: r['number'] as string,
+    kind: r['kind'] as Invoice['kind'],
+    contactName: r['contact_name'] as string,
+    patientId: (r['patient_id'] as string | null) ?? null,
+    issuedOn: r['issued_on'] as string,
+    dueOn,
+    paidOn: (r['paid_on'] as string | null) ?? null,
+    amountCents: r['amount_cents'] as number,
+    status,
+    // Derived rather than stored: an invoice becomes overdue by the calendar
+    // moving, not by anybody opening the screen, so a stored flag would be
+    // wrong every night until something happened to refresh it.
+    overdue: status === 'sent' && dueOn < asOf,
+    notes: r['notes'] as string,
+    createdAt: r['created_at'] as string,
+    updatedAt: r['updated_at'] as string,
+  };
+}
+
+export const invoices = {
+  page(options: {
+    search?: string;
+    kind?: string;
+    /** Accepts the derived 'overdue' as well as the stored statuses. */
+    status?: string;
+    page: number;
+    pageSize: number;
+  }): { items: Invoice[]; total: number } {
+    const asOf = today();
+    const where: string[] = [];
+    const args: unknown[] = [];
+
+    if (options.kind) {
+      where.push('kind = ?');
+      args.push(options.kind);
+    }
+    if (options.status === 'overdue') {
+      where.push("status = 'sent' AND due_on < ?");
+      args.push(asOf);
+    } else if (options.status) {
+      where.push('status = ?');
+      args.push(options.status);
+    }
+    if (options.search) {
+      const columns = ['number', 'contact_name', 'notes'];
+      where.push(`(${columns.map((c) => `COALESCE(${c}, '') LIKE ?`).join(' OR ')})`);
+      const like = `%${options.search}%`;
+      args.push(...columns.map(() => like));
+    }
+
+    const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const counted = db().prepare(`SELECT COUNT(*) AS n FROM invoice ${clause}`).get(...args) as Row;
+    const total = (counted['n'] as number) ?? 0;
+
+    const { page } = pageMeta(total, options.page, options.pageSize);
+    const rows = db()
+      .prepare(`SELECT * FROM invoice ${clause} ORDER BY issued_on DESC, rowid DESC LIMIT ? OFFSET ?`)
+      .all(...args, options.pageSize, (page - 1) * options.pageSize) as Row[];
+
+    return { items: rows.map((r) => toInvoice(r, asOf)), total };
+  },
+
+  byId(invoiceId: string): Invoice | null {
+    const r = db().prepare('SELECT * FROM invoice WHERE id = ?').get(invoiceId) as Row | undefined;
+    if (!r) return null;
+    const invoice = toInvoice(r, today());
+    invoice.lines = (
+      db().prepare('SELECT * FROM invoice_line WHERE invoice_id = ? ORDER BY rowid').all(invoiceId) as Row[]
+    ).map(toInvoiceLine);
+    return invoice;
+  },
+
+  /**
+   * The next reference, as INV-0001. Derived from the highest existing number
+   * rather than a count, so voiding an invoice never causes a reference to be
+   * handed out twice.
+   */
+  nextNumber(): string {
+    const r = db()
+      .prepare("SELECT number FROM invoice WHERE number LIKE 'INV-%' ORDER BY number DESC LIMIT 1")
+      .get() as Row | undefined;
+    const last = r ? Number.parseInt(String(r['number']).slice(4), 10) : 0;
+    return `INV-${String((Number.isFinite(last) ? last : 0) + 1).padStart(4, '0')}`;
+  },
+
+  insert(invoice: Invoice, lines: InvoiceLine[]): void {
+    const conn = db();
+    const write = conn.transaction(() => {
+      conn
+        .prepare(
+          `INSERT INTO invoice
+             (id, number, kind, contact_name, patient_id, issued_on, due_on,
+              paid_on, amount_cents, status, notes, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          invoice.id, invoice.number, invoice.kind, invoice.contactName,
+          invoice.patientId, invoice.issuedOn, invoice.dueOn, invoice.paidOn,
+          invoice.amountCents, invoice.status, invoice.notes,
+          invoice.createdAt, invoice.updatedAt,
+        );
+      for (const line of lines) {
+        conn
+          .prepare(
+            `INSERT INTO invoice_line
+               (id, invoice_id, product_id, billing_entry_id, description, quantity, unit_price_cents)
+             VALUES (?,?,?,?,?,?,?)`,
+          )
+          .run(
+            line.id, invoice.id, line.productId, line.billingEntryId,
+            line.description, line.quantity, line.unitPriceCents,
+          );
+      }
+    });
+    // One transaction: an invoice whose lines failed to write would show a
+    // total that its own detail cannot account for.
+    write();
+  },
+
+  setStatus(invoiceId: string, status: Invoice['status'], paidOn: string | null): void {
+    db()
+      .prepare('UPDATE invoice SET status = ?, paid_on = ?, updated_at = ? WHERE id = ?')
+      .run(status, paidOn, now(), invoiceId);
+  },
+
+  /** The three figures on the Invoice Manager cards. Money owed to the clinic. */
+  summary(): InvoiceSummary {
+    const asOf = today();
+    const month = asOf.slice(0, 7);
+    const row = db()
+      .prepare(
+        `SELECT
+           COALESCE(SUM(CASE WHEN status = 'sent' THEN amount_cents END), 0) AS outstanding,
+           COALESCE(SUM(CASE WHEN status = 'sent' AND due_on < ? THEN 1 END), 0) AS overdueCount,
+           COALESCE(SUM(CASE WHEN status = 'sent' AND due_on < ? THEN amount_cents END), 0) AS overdue,
+           COALESCE(SUM(CASE WHEN status = 'paid' AND substr(paid_on, 1, 7) = ? THEN amount_cents END), 0) AS collected
+         FROM invoice WHERE kind = 'patient'`,
+      )
+      .get(asOf, asOf, month) as Row;
+
+    return {
+      outstandingCents: row['outstanding'] as number,
+      overdueCount: row['overdueCount'] as number,
+      overdueCents: row['overdue'] as number,
+      collectedThisMonthCents: row['collected'] as number,
+    };
+  },
+};
+
+function toExpense(r: Row): Expense {
+  return {
+    id: r['id'] as string,
+    incurredOn: r['incurred_on'] as string,
+    description: r['description'] as string,
+    category: r['category'] as Expense['category'],
+    reference: r['reference'] as string,
+    amountCents: r['amount_cents'] as number,
+    createdAt: r['created_at'] as string,
+    updatedAt: r['updated_at'] as string,
+  };
+}
+
+export const expenses = {
+  page(options: {
+    search?: string;
+    category?: string;
+    page: number;
+    pageSize: number;
+  }): { items: Expense[]; total: number } {
+    const where: string[] = [];
+    const args: unknown[] = [];
+
+    if (options.category) {
+      where.push('category = ?');
+      args.push(options.category);
+    }
+    if (options.search) {
+      const columns = ['description', 'reference', 'category'];
+      where.push(`(${columns.map((c) => `COALESCE(${c}, '') LIKE ?`).join(' OR ')})`);
+      const like = `%${options.search}%`;
+      args.push(...columns.map(() => like));
+    }
+
+    const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const counted = db().prepare(`SELECT COUNT(*) AS n FROM expense ${clause}`).get(...args) as Row;
+    const total = (counted['n'] as number) ?? 0;
+
+    const { page } = pageMeta(total, options.page, options.pageSize);
+    const rows = db()
+      .prepare(`SELECT * FROM expense ${clause} ORDER BY incurred_on DESC, rowid DESC LIMIT ? OFFSET ?`)
+      .all(...args, options.pageSize, (page - 1) * options.pageSize) as Row[];
+
+    return { items: rows.map(toExpense), total };
+  },
+
+  byId(expenseId: string): Expense | null {
+    const r = db().prepare('SELECT * FROM expense WHERE id = ?').get(expenseId) as Row | undefined;
+    return r ? toExpense(r) : null;
+  },
+
+  insert(e: Expense): void {
+    db()
+      .prepare(
+        `INSERT INTO expense
+           (id, incurred_on, description, category, reference, amount_cents, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      )
+      .run(e.id, e.incurredOn, e.description, e.category, e.reference, e.amountCents, e.createdAt, e.updatedAt);
+  },
+
+  remove(expenseId: string): void {
+    db().prepare('DELETE FROM expense WHERE id = ?').run(expenseId);
+  },
+
+  summary(): ExpenseSummary {
+    const asOf = today();
+    const row = db()
+      .prepare(
+        `SELECT
+           COALESCE(SUM(CASE WHEN substr(incurred_on,1,7) = ? THEN amount_cents END), 0) AS month,
+           COALESCE(SUM(CASE WHEN substr(incurred_on,1,7) = ? THEN 1 END), 0) AS monthCount,
+           COALESCE(SUM(CASE WHEN substr(incurred_on,1,4) = ? THEN amount_cents END), 0) AS year,
+           COUNT(*) AS total
+         FROM expense`,
+      )
+      .get(asOf.slice(0, 7), asOf.slice(0, 7), asOf.slice(0, 4)) as Row;
+
+    return {
+      thisMonthCents: row['month'] as number,
+      thisMonthCount: row['monthCount'] as number,
+      thisYearCents: row['year'] as number,
+      totalCount: row['total'] as number,
+    };
+  },
+};

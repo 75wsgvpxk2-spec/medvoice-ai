@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS clinic (
   id            TEXT PRIMARY KEY DEFAULT 'clinic',
   name          TEXT NOT NULL DEFAULT '',
   legal_name    TEXT NOT NULL DEFAULT '',
+  currency      TEXT NOT NULL DEFAULT 'USD',
   registration  TEXT NOT NULL DEFAULT '',
   address       TEXT NOT NULL DEFAULT '',
   phone         TEXT NOT NULL DEFAULT '',
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS patient (
                      CHECK (status IN ('critical','watch','stable','managed')),
   queue_position   INTEGER,
   last_assessed_at TEXT,
+  created_at       TEXT,
   -- Administrative detail: contact, next of kin, cover. JSON because none of it
   -- is ever queried field by field, matching how conditions are already stored.
   profile          TEXT NOT NULL DEFAULT '{}'
@@ -351,3 +353,91 @@ CREATE TABLE IF NOT EXISTS pronunciation (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pronunciation_term
   ON pronunciation(clinician_id, term);
+
+/* ==========================================================================
+ * Operations — running the practice, as opposed to treating the patients.
+ *
+ * Money is stored in integer minor units (cents) everywhere below, never as a
+ * float. Repeated float arithmetic across invoice lines drifts, and a clinic
+ * that finds a total off by a cent stops trusting the whole ledger. Formatting
+ * happens once, at the edge, against the clinic's configured currency.
+ *
+ * Nothing financial is ever hard-deleted. Products archive, invoices void; both
+ * stay queryable, because a record that can vanish is a record an auditor
+ * cannot rely on.
+ * ======================================================================== */
+
+CREATE TABLE IF NOT EXISTS product (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  sku            TEXT NOT NULL DEFAULT '',
+  barcode        TEXT NOT NULL DEFAULT '',
+  /* A consumable, something the clinic does, or something it sells. */
+  kind           TEXT NOT NULL DEFAULT 'supply'
+                   CHECK (kind IN ('supply','service','retail')),
+  category       TEXT NOT NULL DEFAULT '',
+  price_cents    INTEGER NOT NULL DEFAULT 0,
+  /* Services have no stock; the column stays 0 and the screen hides it. */
+  stock          INTEGER NOT NULL DEFAULT 0,
+  /* Below this, the item is reported low. 0 disables the warning. */
+  reorder_point  INTEGER NOT NULL DEFAULT 0,
+  archived       INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_kind ON product(kind, archived);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_product_sku ON product(sku) WHERE sku <> '';
+
+CREATE TABLE IF NOT EXISTS invoice (
+  id            TEXT PRIMARY KEY,
+  /* Human-facing reference, unique and never reused. */
+  number        TEXT NOT NULL,
+  /* Money owed to the clinic, or money the clinic owes. */
+  kind          TEXT NOT NULL CHECK (kind IN ('patient','vendor')),
+  contact_name  TEXT NOT NULL,
+  /* Set for patient invoices so the record links back to the person. */
+  patient_id    TEXT REFERENCES patient(id),
+  issued_on     TEXT NOT NULL,
+  due_on        TEXT NOT NULL,
+  paid_on       TEXT,
+  amount_cents  INTEGER NOT NULL DEFAULT 0,
+  /* Overdue is derived from due_on rather than stored, so it cannot go stale
+     the moment the date passes without anybody opening the screen. */
+  status        TEXT NOT NULL DEFAULT 'draft'
+                  CHECK (status IN ('draft','sent','paid','void')),
+  notes         TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_number ON invoice(number);
+CREATE INDEX IF NOT EXISTS idx_invoice_status ON invoice(kind, status, due_on);
+
+CREATE TABLE IF NOT EXISTS invoice_line (
+  id               TEXT PRIMARY KEY,
+  invoice_id       TEXT NOT NULL REFERENCES invoice(id) ON DELETE CASCADE,
+  /* Optional: a line may describe something not in the catalogue. */
+  product_id       TEXT REFERENCES product(id),
+  /* Set when the line came from clinical work already recorded. */
+  billing_entry_id TEXT REFERENCES billing_entry(id),
+  description      TEXT NOT NULL,
+  quantity         INTEGER NOT NULL DEFAULT 1,
+  unit_price_cents INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_line_invoice ON invoice_line(invoice_id);
+
+CREATE TABLE IF NOT EXISTS expense (
+  id           TEXT PRIMARY KEY,
+  incurred_on  TEXT NOT NULL,
+  description  TEXT NOT NULL,
+  category     TEXT NOT NULL DEFAULT 'other',
+  /* Receipt number, cheque number, whatever the clinic files it under. */
+  reference    TEXT NOT NULL DEFAULT '',
+  amount_cents INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_expense_date ON expense(incurred_on);
