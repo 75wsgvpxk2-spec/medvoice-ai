@@ -2507,3 +2507,163 @@ tbody tr:hover { background: var(--brand-wash); }
   .ops-grid { grid-template-columns: 1fr 1fr; }
   .report-grid { grid-template-columns: 1fr; }
 }
+
+/* HSE medical report --------------------------------------------------------
+   A wizard on screen and a letter on paper. The print rules matter as much as
+   the screen ones: the output goes to an employer's occupational health unit,
+   and a document that breaks a table across a page or prints the navigation
+   is one a clinic will not send. */
+
+.wizard-steps {
+  display: flex;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  gap: var(--gap-2);
+  flex-wrap: wrap;
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  min-height: 38px;
+  padding: 0 var(--gap-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  color: var(--ink-secondary);
+  box-shadow: none;
+}
+
+.wizard-step .wizard-num {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-sunken);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.wizard-step.active { border-color: var(--brand); background: var(--brand-wash); color: var(--brand-deep); font-weight: 600; }
+.wizard-step.active .wizard-num { background: var(--brand); color: #fff; }
+.wizard-step.done .wizard-num { background: var(--managed); color: #fff; }
+
+/* Quick answers. Most examination fields are one of two or three values, so
+   they are buttons rather than a text box the doctor has to fill each time. */
+.choice-row { gap: var(--gap-2); flex-wrap: wrap; }
+
+.chip-button {
+  min-height: 34px;
+  padding: 0 var(--gap-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: var(--text-sm);
+  box-shadow: none;
+}
+
+.chip-button.active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+
+.chip-button.active:hover:not(:disabled) { background: var(--brand); color: #fff; border-color: var(--brand); }
+.choice-other { max-width: 200px; }
+.spiro-label { min-width: 70px; font-weight: 600; font-size: var(--text-sm); }
+
+.prefill-note { color: var(--brand-deep); font-size: var(--text-xs); }
+
+.signature-preview {
+  padding: var(--gap-3);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: #fff;
+  max-width: 320px;
+}
+
+.signature-preview img { max-width: 100%; max-height: 90px; display: block; }
+
+/* The document itself -------------------------------------------------------
+   Fixed to a page width on screen so what the doctor reviews is what prints. */
+
+.hse-preview {
+  background: var(--surface-sunken);
+  padding: var(--gap-5);
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+}
+
+.hse-doc {
+  background: #fff;
+  color: #111;
+  width: 210mm;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 16mm 18mm;
+  box-shadow: var(--shadow-lg);
+  font-size: 11pt;
+  line-height: 1.45;
+}
+
+.hse-letterhead { text-align: center; margin-bottom: var(--gap-5); }
+.hse-letterhead-img { max-width: 100%; max-height: 45mm; object-fit: contain; }
+.hse-letterhead-text { font-size: 10pt; line-height: 1.4; }
+.hse-letterhead-text strong { display: block; font-size: 14pt; }
+
+.hse-date { margin: 0 0 var(--gap-4); }
+.hse-recipient { font-style: normal; margin-bottom: var(--gap-5); }
+.hse-title { font-size: 13pt; text-align: center; letter-spacing: 0.04em; margin: 0 0 var(--gap-2); }
+.hse-subject { text-align: center; font-weight: 700; margin: 0 0 var(--gap-4); }
+.hse-intro { margin-bottom: var(--gap-4); }
+
+.hse-doc h2 {
+  font-size: 11pt;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid #bbb;
+  padding-bottom: 2px;
+  margin: var(--gap-4) 0 var(--gap-2);
+}
+
+.hse-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 var(--gap-5); }
+.hse-subhead { font-weight: 700; margin-top: var(--gap-2); font-size: 10pt; }
+.hse-row { display: flex; justify-content: space-between; gap: var(--gap-3); border-bottom: 1px dotted #ddd; padding: 2px 0; }
+.hse-label { color: #444; }
+.hse-value { font-weight: 600; text-align: right; }
+
+.hse-table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+.hse-table th, .hse-table td { border: 1px solid #bbb; padding: 4px 8px; text-align: left; }
+
+.hse-signature { margin-top: var(--gap-6); }
+.hse-signature-img { max-height: 22mm; display: block; }
+.hse-signature-space { height: 18mm; }
+.hse-rule { border-top: 1px solid #111; width: 70%; margin-bottom: 4px; }
+.hse-signed-note { font-size: 9pt; color: #555; margin-top: 4px; }
+
+.hse-draft-mark {
+  margin-top: var(--gap-5);
+  text-align: center;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+  color: var(--critical);
+  border: 2px dashed var(--critical-line);
+  padding: var(--gap-2);
+}
+
+@media print {
+  /* Only the document prints. The shell, the wizard and every control go. */
+  .shell, .sidebar, .strip, .demo-banner, .wizard-steps, .no-print { display: none !important; }
+  .hse-preview { padding: 0; background: none; overflow: visible; }
+  .hse-doc { width: auto; box-shadow: none; padding: 0; margin: 0; }
+  .hse-break-avoid { break-inside: avoid; page-break-inside: avoid; }
+  /* A signature block split across a page break reads as an unsigned page
+     followed by an orphaned name. */
+  .hse-signature { break-inside: avoid; page-break-inside: avoid; }
+  @page { margin: 14mm; }
+}

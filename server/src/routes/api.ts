@@ -3,7 +3,8 @@ import rateLimit from 'express-rate-limit';
 import { randomBytes } from 'node:crypto';
 import { config } from '../lib/config.ts';
 import { buildReports, type Period } from '../lib/reports.ts';
-import type { Product, Invoice, InvoiceLine, Expense } from '../../../shared/types.ts';
+import { prefillFor, suggestedExamDate } from '../lib/hse-prefill.ts';
+import type { Product, Invoice, InvoiceLine, Expense, HseReport } from '../../../shared/types.ts';
 import { EXPENSE_CATEGORIES } from '../../../shared/types.ts';
 import { readPaging, pageMeta, takePage } from '../lib/paging.ts';
 import {
@@ -34,6 +35,7 @@ import {
   products,
   invoices,
   expenses,
+  hseReports,
 } from '../db/repositories.ts';
 import { seed as seedDemoPopulation } from '../db/seed.ts';
 import * as runtime from '../lib/settings.ts';
@@ -313,6 +315,7 @@ api.post('/auth/signup', (req, res) => {
     email,
     website: '',
     logo: null,
+    letterhead: null,
     ...DEFAULT_BRAND,
     // Whoever creates the clinic is the doctor it is known by, until changed.
     primaryDoctor: name,
@@ -512,6 +515,23 @@ api.put('/clinic', requireClinician, requireAdmin, (req, res) => {
     }
   }
 
+  /*
+   * The letterhead is validated the same way but excludes SVG. It is rendered
+   * into a document the clinic sends to an employer, and an SVG can carry
+   * script; a raster banner cannot.
+   */
+  const letterhead = body['letterhead'] ?? null;
+  if (letterhead !== null) {
+    if (typeof letterhead !== 'string' || !/^data:image\/(png|jpeg|webp);base64,/.test(letterhead)) {
+      res.status(400).json({ error: 'The letterhead must be a PNG, JPEG or WebP image.' });
+      return;
+    }
+    if (letterhead.length > MAX_LOGO_CHARS) {
+      res.status(400).json({ error: 'That letterhead is too large. Use one under about 1.5 MB.' });
+      return;
+    }
+  }
+
   const text = (key: string): string => String(body[key] ?? '').trim();
 
   /**
@@ -549,6 +569,7 @@ api.put('/clinic', requireClinician, requireAdmin, (req, res) => {
       email: text('email'),
       website: text('website'),
       logo,
+      letterhead,
       brandDark: colour('brandDark', DEFAULT_BRAND.brandDark),
       brandLight: colour('brandLight', DEFAULT_BRAND.brandLight),
       primaryDoctor: text('primaryDoctor'),
@@ -2309,6 +2330,175 @@ api.get('/reports', requireClinician, requireAdmin, (req, res) => {
     ? asked
     : 'this_month') as Period;
   res.json(buildReports(period));
+});
+
+/* ---------------------------------------------------- occupational health -- */
+
+/**
+ * HSE medical reports.
+ *
+ * Clinician-level rather than admin: writing and signing one is clinical work.
+ * A report is a draft until it is approved, and approval is the moment it
+ * becomes a signed document — after which it cannot be edited, because a copy
+ * may already be with an employer and two versions of a signed medical opinion
+ * is exactly the situation an audit trail exists to prevent.
+ */
+
+api.get('/hse-reports', requireClinician, (req, res) => {
+  const { page, pageSize } = readPaging(req.query, 20);
+  const found = hseReports.page({
+    search: String(req.query['search'] ?? '').trim() || undefined,
+    status: String(req.query['status'] ?? '').trim() || undefined,
+    page,
+    pageSize,
+  });
+  res.json({ reports: found.items, ...pageMeta(found.total, page, pageSize) });
+});
+
+api.get('/hse-reports/:id', requireClinician, (req, res) => {
+  const report = hseReports.byId(param(req, 'id'));
+  if (!report) {
+    res.status(404).json({ error: 'That report no longer exists.' });
+    return;
+  }
+  res.json({ report, clinic: clinic.get() });
+});
+
+/**
+ * What the record can fill in before the doctor starts.
+ *
+ * Returned separately from the draft so the wizard can show which fields came
+ * from an observation and when it was taken — a number the doctor did not type
+ * needs to say where it came from, or it cannot be checked.
+ */
+api.get('/patients/:id/hse-prefill', requireClinician, (req: AuthedRequest, res) => {
+  const patient = patients.byId(param(req, 'id'));
+  if (!patient) {
+    res.status(404).json({ error: 'That patient is not in your population.' });
+    return;
+  }
+  const { findings, sources, stale } = prefillFor(patient);
+  res.json({
+    patient,
+    findings,
+    sources,
+    stale,
+    examinedOn: suggestedExamDate(patient.id),
+    clinic: clinic.get(),
+  });
+});
+
+api.post('/hse-reports', requireClinician, (req: AuthedRequest, res) => {
+  const body = req.body as Record<string, unknown>;
+  const patient = patients.byId(String(body['patientId'] ?? ''));
+  if (!patient) {
+    res.status(400).json({ error: 'Choose a patient for this report.' });
+    return;
+  }
+
+  const stamp = new Date().toISOString();
+  const prefill = prefillFor(patient);
+  const report: HseReport = {
+    id: id('hse'),
+    patientId: patient.id,
+    patientName: patient.name,
+    patientDob: patient.profile?.dateOfBirth ?? '',
+    createdBy: req.clinicianId!,
+    examinedOn: String(body['examinedOn'] ?? suggestedExamDate(patient.id)),
+    recipient: (body['recipient'] as HseReport['recipient']) ?? { attention: '', company: '', addressLines: [] },
+    findings: (body['findings'] as HseReport['findings']) ?? prefill.findings,
+    recommendation: (body['recommendation'] as HseReport['recommendation']) ?? {
+      decision: 'fit', restrictions: '', notes: '', reviewIntervalMonths: 12,
+    },
+    status: 'draft',
+    signedBy: null, signedAt: null, signature: null,
+    signerName: '', signerCredentials: '',
+    createdAt: stamp, updatedAt: stamp,
+  };
+
+  hseReports.insert(report);
+  res.json({ report: hseReports.byId(report.id) });
+});
+
+api.put('/hse-reports/:id', requireClinician, (req: AuthedRequest, res) => {
+  const existing = hseReports.byId(param(req, 'id'));
+  if (!existing) {
+    res.status(404).json({ error: 'That report no longer exists.' });
+    return;
+  }
+  const body = req.body as Record<string, unknown>;
+  const saved = hseReports.update(existing.id, {
+    examinedOn: String(body['examinedOn'] ?? existing.examinedOn),
+    recipient: (body['recipient'] as HseReport['recipient']) ?? existing.recipient,
+    findings: (body['findings'] as HseReport['findings']) ?? existing.findings,
+    recommendation: (body['recommendation'] as HseReport['recommendation']) ?? existing.recommendation,
+  });
+
+  if (!saved) {
+    // The UPDATE is scoped to drafts, so nothing changing means it is signed.
+    res.status(400).json({ error: 'This report has been signed and can no longer be edited.' });
+    return;
+  }
+  res.json({ report: hseReports.byId(existing.id) });
+});
+
+/** Human decision point: a doctor putting their name to a medical opinion. */
+api.post('/hse-reports/:id/approve', requireClinician, (req: AuthedRequest, res) => {
+  const existing = hseReports.byId(param(req, 'id'));
+  if (!existing) {
+    res.status(404).json({ error: 'That report no longer exists.' });
+    return;
+  }
+  const signer = clinicians.byId(req.clinicianId!);
+  if (!signer) {
+    res.status(400).json({ error: 'Your account could not be found.' });
+    return;
+  }
+  if (!signer.signature) {
+    res.status(400).json({
+      error: 'Add your signature under Settings before signing a report.',
+    });
+    return;
+  }
+
+  const approved = hseReports.approve(existing.id, {
+    id: signer.id,
+    name: signer.name,
+    credentials: signer.credentials,
+    signature: signer.signature,
+  });
+  if (!approved) {
+    res.status(400).json({ error: 'This report has already been signed.' });
+    return;
+  }
+  res.json({ report: hseReports.byId(existing.id) });
+});
+
+/**
+ * A clinician's signature image, stored against their own account.
+ *
+ * Only ever their own: a signature is the thing that makes a document theirs,
+ * so no route lets one person set another's, administrator or not.
+ */
+api.put('/auth/signature', requireClinician, (req: AuthedRequest, res) => {
+  const raw = String((req.body as Record<string, unknown>)['signature'] ?? '');
+  if (raw === '') {
+    clinicians.setSignature(req.clinicianId!, null);
+    res.json({ ok: true, hasSignature: false });
+    return;
+  }
+  // A data URI for a raster image and nothing else. SVG is excluded on purpose:
+  // it can carry script, and this is rendered inside the application.
+  if (!/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(raw)) {
+    res.status(400).json({ error: 'Upload a PNG, JPEG or WebP image of your signature.' });
+    return;
+  }
+  if (raw.length > 400_000) {
+    res.status(400).json({ error: 'That image is too large. Use one under about 300 KB.' });
+    return;
+  }
+  clinicians.setSignature(req.clinicianId!, raw);
+  res.json({ ok: true, hasSignature: true });
 });
 
 /* ------------------------------------------------------------ audit log -- */

@@ -16,6 +16,7 @@ const BLANK: Omit<Clinic, 'updatedAt'> = {
   email: '',
   website: '',
   logo: null,
+  letterhead: null,
   ...DEFAULT_BRAND,
   primaryDoctor: '',
 };

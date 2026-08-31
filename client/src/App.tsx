@@ -17,6 +17,7 @@ import { Flags } from './screens/Flags';
 import { Settings } from './screens/Settings';
 import { Audit } from './screens/Audit';
 import { OperationsHub, Products, Invoices, Expenses, Reports, type OpsScreen } from './screens/Operations';
+import { HseWizard, HseReportList } from './screens/HseReport';
 import type { Clinic } from '../../shared/types';
 
 type Route =
@@ -31,7 +32,9 @@ type Route =
   | { name: 'settings' }
   | { name: 'clinic' }
   | { name: 'activity' }
-  | { name: 'operations'; screen: OpsScreen };
+  | { name: 'operations'; screen: OpsScreen }
+  | { name: 'hse-list' }
+  | { name: 'hse'; patientId?: string; reportId?: string };
 
 export function App() {
   const [clinician, setClinician] = useState<Clinician | null>(null);
@@ -303,6 +306,12 @@ export function App() {
             active={route.name === 'audit'}
             onClick={() => setRoute({ name: 'audit' })}
           />
+          <NavItem
+            label="HSE reports"
+            icon={<IconDocument />}
+            active={route.name === 'hse-list' || route.name === 'hse'}
+            onClick={() => setRoute({ name: 'hse-list' })}
+          />
           {clinician.role === 'admin' && (
             <NavItem
               label="Operations"
@@ -421,6 +430,7 @@ export function App() {
           <PatientDetail
             patientId={route.patientId}
             onNewEncounter={() => openEncounter(route.patientId)}
+            onHseReport={() => setRoute({ name: 'hse', patientId: route.patientId })}
             onChanged={loadQueue}
             onBack={() => setRoute({ name: 'queue' })}
           />
@@ -471,6 +481,21 @@ export function App() {
               return <OperationsHub onOpen={(screen) => setRoute({ name: 'operations', screen })} />;
           }
         })()}
+
+        {route.name === 'hse-list' && (
+          <HseReportList
+            onOpen={(reportId) => setRoute({ name: 'hse', reportId })}
+            onNew={() => setRoute({ name: 'population' })}
+          />
+        )}
+
+        {route.name === 'hse' && (
+          <HseWizard
+            patientId={route.patientId}
+            reportId={route.reportId}
+            onDone={() => setRoute({ name: 'hse-list' })}
+          />
+        )}
 
         {route.name === 'settings' && <Settings clinician={clinician} />}
 
@@ -545,6 +570,15 @@ const IconDashboard = () => (
 );
 
 /* A box on a base — supplies and stock, the least clinical thing in the nav. */
+const IconDocument = () => (
+  <svg {...svg}>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+    <line x1="8" y1="13" x2="16" y2="13" />
+    <line x1="8" y1="17" x2="13" y2="17" />
+  </svg>
+);
+
 const IconOperations = () => (
   <svg {...svg}>
     <path d="M3 7l9-4 9 4v10l-9 4-9-4z" />

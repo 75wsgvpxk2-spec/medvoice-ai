@@ -139,6 +139,7 @@ async function main(): Promise<void> {
     email,
     website: '',
     logo: null,
+    letterhead: null,
     ...DEFAULT_BRAND,
     primaryDoctor: clinicianName,
   });

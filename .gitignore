@@ -9,3 +9,10 @@ data/*.db-shm
 .DS_Store
 *.log
 coverage/
+
+# Reference documents supplied by a clinic. These carry real patient identity
+# and real signature images — never commit one, least of all to a repository
+# that is going to be public.
+*.docx
+*.doc
+*.pdf

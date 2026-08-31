@@ -5,6 +5,16 @@ Notable changes. Dates are the day the work landed on `main`.
 ## Unreleased
 
 ### Added
+- **HSE medical reports.** A six-step wizard that drafts an occupational health
+  report from the clinical record, has the doctor review it, and produces a
+  signed document to print or save as PDF. Measurements are pre-filled from
+  recent observations — never invented, and never carried over from a reading
+  too old to describe today's examination; anything older is offered as
+  labelled history instead. Every examination field starts at its normal value,
+  so the doctor's time goes on the exceptions and the fitness decision. Signing
+  applies the clinician's stored signature image, and freezes the document: a
+  signed report cannot be edited, cannot be signed twice, and keeps the
+  signature it was signed with even after the doctor replaces theirs.
 - **Operations.** Four administrator-only screens for running the practice
   rather than treating the patients: a product catalogue with stock and reorder
   points, invoices for patients and vendors, expenses, and reports built from

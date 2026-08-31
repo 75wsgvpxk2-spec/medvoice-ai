@@ -34,11 +34,14 @@ const DISMISSAL_REASONS: Array<{ value: DismissalReason; label: string }> = [
 export function PatientDetail({
   patientId,
   onNewEncounter,
+  onHseReport,
   onChanged,
   onBack,
 }: {
   patientId: string;
   onNewEncounter: () => void;
+  /** Starts an occupational health report pre-filled from this record. */
+  onHseReport: () => void;
   onChanged: () => void;
   onBack: () => void;
 }) {
@@ -163,6 +166,7 @@ export function PatientDetail({
         </div>
         <div className="row">
           <button onClick={() => setReporting(true)}>Summary</button>
+          <button onClick={onHseReport}>HSE report</button>
           <button className="primary" onClick={onNewEncounter}>
             New encounter
           </button>

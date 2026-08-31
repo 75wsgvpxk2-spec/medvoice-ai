@@ -58,6 +58,11 @@ function migrate(conn: Database.Database): void {
     // different question and answers this one wrongly.
     ['patient', 'created_at', 'TEXT'],
     ['clinic', 'currency', "TEXT NOT NULL DEFAULT 'USD'"],
+    // A doctor's signature image, stored once and applied to what they sign.
+    ['clinician', 'signature', 'TEXT'],
+    // Letterhead for printed documents, separate from the interface logo:
+    // one is a 40px mark in a sidebar, the other is a page-width banner.
+    ['clinic', 'letterhead', 'TEXT'],
     ['documentation_alert', 'resolution_route', 'TEXT'],
     ['documentation_alert', 'resolution_note', 'TEXT'],
   ];

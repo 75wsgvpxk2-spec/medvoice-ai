@@ -441,3 +441,46 @@ CREATE TABLE IF NOT EXISTS expense (
 );
 
 CREATE INDEX IF NOT EXISTS idx_expense_date ON expense(incurred_on);
+
+/* ==========================================================================
+ * Occupational health reports.
+ *
+ * An HSE medical is a fixed-shape document a doctor fills in after an
+ * examination and signs. Filling it by hand in a word processor takes a long
+ * time and re-types facts the clinical record already holds — the patient's
+ * name and date of birth, their blood pressure, their pulse.
+ *
+ * The findings are stored as one JSON document rather than sixty columns. The
+ * shape belongs to the template, and a template that gains a field should not
+ * require a migration; what must not drift is the identity of the report, who
+ * signed it and when, so those are columns.
+ * ======================================================================== */
+
+CREATE TABLE IF NOT EXISTS hse_report (
+  id            TEXT PRIMARY KEY,
+  patient_id    TEXT NOT NULL REFERENCES patient(id),
+  /* Who created it. The signer is recorded separately: the doctor who signs is
+     not always the one who started the draft. */
+  created_by    TEXT NOT NULL REFERENCES clinician(id),
+  examined_on   TEXT NOT NULL,
+  /* Who the report is addressed to — employer, occupational health unit. */
+  recipient     TEXT NOT NULL DEFAULT '{}',
+  /* Every measurement and system finding. JSON: HseFindings. */
+  findings      TEXT NOT NULL DEFAULT '{}',
+  /* Fitness decision and the narrative around it. JSON: HseRecommendation. */
+  recommendation TEXT NOT NULL DEFAULT '{}',
+  status        TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','approved')),
+  signed_by     TEXT REFERENCES clinician(id),
+  signed_at     TEXT,
+  /* The signature image as it was at the moment of signing, copied rather than
+     referenced. A doctor who later replaces their signature must not silently
+     restyle every report they have already put their name to. */
+  signature     TEXT,
+  signer_name   TEXT NOT NULL DEFAULT '',
+  signer_credentials TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hse_patient ON hse_report(patient_id, examined_on);
+CREATE INDEX IF NOT EXISTS idx_hse_status ON hse_report(status, examined_on);

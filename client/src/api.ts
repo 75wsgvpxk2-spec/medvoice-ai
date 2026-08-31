@@ -25,6 +25,8 @@ import type {
   Expense,
   InvoiceSummary,
   ExpenseSummary,
+  HseReport,
+  HseFindings,
 } from '../../shared/types';
 
 export class ApiError extends Error {
@@ -303,6 +305,21 @@ export interface ReportsView {
   };
 }
 
+export interface HsePrefill {
+  patient: Patient;
+  findings: HseFindings;
+  /** Fields taken from an observation, with the date it was recorded. */
+  sources: Record<string, { value: string; recordedOn: string }>;
+  /** On file but too old to present as today's findings. */
+  stale: Array<{ field: string; label: string; value: string; recordedOn: string; daysAgo: number }>;
+  examinedOn: string;
+  clinic: Clinic;
+}
+
+export interface HseReportPage extends Paged {
+  reports: HseReport[];
+}
+
 export interface AuditView {
   events: AuditEvent[];
   actions: string[];
@@ -417,6 +434,33 @@ export const api = {
     post<{ newEncounterId: string; version: number }>(`/encounters/${encounterId}/amend`, { edits }),
 
   previewResolution: (alertId: string) => request<ResolutionPreview>(`/alerts/${alertId}/preview`),
+  /* ------------------------------------------------ occupational health -- */
+
+  hseReports: (params: { search?: string; status?: string; page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.search) q.set('search', params.search);
+    if (params.status) q.set('status', params.status);
+    q.set('page', String(params.page ?? 1));
+    if (params.pageSize) q.set('pageSize', String(params.pageSize));
+    return request<HseReportPage>(`/hse-reports?${q.toString()}`);
+  },
+
+  hseReport: (reportId: string) => request<{ report: HseReport; clinic: Clinic }>(`/hse-reports/${reportId}`),
+
+  /** What the clinical record can fill in before the doctor starts typing. */
+  hsePrefill: (patientId: string) => request<HsePrefill>(`/patients/${patientId}/hse-prefill`),
+
+  createHseReport: (input: { patientId: string; examinedOn?: string }) =>
+    post<{ report: HseReport }>('/hse-reports', input),
+
+  saveHseReport: (reportId: string, input: Partial<HseReport>) =>
+    put<{ report: HseReport }>(`/hse-reports/${reportId}`, input),
+
+  approveHseReport: (reportId: string) => post<{ report: HseReport }>(`/hse-reports/${reportId}/approve`),
+
+  /** A clinician's own signature image. Empty string removes it. */
+  saveSignature: (signature: string) => put<{ ok: boolean; hasSignature: boolean }>('/auth/signature', { signature }),
+
   /* ---------------------------------------------------------- operations -- */
 
   products: (params: { search?: string; kind?: string; archived?: boolean; page?: number; pageSize?: number } = {}) => {

@@ -384,6 +384,13 @@ export interface Clinician {
   mustChangePassword: boolean;
   createdAt: string | null;
   lastSignInAt: string | null;
+  /**
+   * The doctor's signature image, as a data URI.
+   *
+   * Applied to documents they sign, and copied onto each one at the moment of
+   * signing — replacing it later must not restyle what is already signed.
+   */
+  signature: string | null;
 }
 
 /** The clinic this installation belongs to. A single record. */
@@ -404,6 +411,15 @@ export interface Clinic {
   website: string;
   /** Data URI, or null to fall back to the MedVoice mark. */
   logo: string | null;
+  /**
+   * Letterhead banner for printed documents, separate from `logo`.
+   *
+   * One is a 40px mark beside the sidebar title; the other is a page-width
+   * banner with the practice's address and contact details. Scaling the first
+   * up to serve as the second produces exactly the letterhead a clinic would
+   * be embarrassed to send an employer.
+   */
+  letterhead: string | null;
   /**
    * Chrome colours only — the sidebar, buttons and headings.
    *
@@ -921,3 +937,163 @@ export interface ExpenseSummary {
   thisYearCents: Cents;
   totalCount: number;
 }
+
+// ---------------------------------------------------------------------------
+// Occupational health — the HSE medical report
+// ---------------------------------------------------------------------------
+
+/**
+ * The fixed shape of an HSE medical, taken from the template a clinic already
+ * fills in by hand.
+ *
+ * Almost every field defaults to the normal finding, because almost every
+ * field is normal on almost every examination — the doctor's time should go on
+ * the exceptions. Nothing is pre-filled with a *measurement* it did not
+ * observe; a default of "Normal" for an examination the doctor performed is a
+ * convenience, a default blood pressure would be an invention.
+ */
+
+export interface HseRecipient {
+  /** "Nurse, Occupational Health Unit" */
+  attention: string;
+  company: string;
+  addressLines: string[];
+}
+
+export interface HseVitals {
+  bloodPressure: string;
+  pulse: string;
+  weightLb: string;
+  heightCm: string;
+  bmi: string;
+  spo2: string;
+  diascanMgDl: string;
+}
+
+export interface HseUrinalysis {
+  protein: string;
+  blood: string;
+  glucose: string;
+}
+
+export interface HseVision {
+  distanceLeft: string;
+  distanceRight: string;
+  colourIshihara: string;
+  near: string;
+}
+
+export interface HseSystems {
+  heartSound: string;
+  murmur: string;
+  cardiovascularOther: string;
+  chestShape: string;
+  chestMovements: string;
+  trachea: string;
+  breathSounds: string;
+  liver: string;
+  spleen: string;
+  abdominalScars: string;
+  hernias: string;
+  guHernia: string;
+  varicoseVeins: string;
+  stdSigns: string;
+  entExternal: string;
+  auroscopyRight: string;
+  auroscopyLeft: string;
+  hearing: string;
+}
+
+export interface HseSpirometryRow {
+  label: string;
+  value: string;
+  percent: string;
+}
+
+export interface HseInvestigations {
+  ecg: string;
+  drugPanel: Array<{ substance: string; result: string }>;
+  labNote: string;
+  spirometry: HseSpirometryRow[];
+  spirometryInterpretation: string;
+  audiogram: string;
+}
+
+export type FitnessDecision = 'fit' | 'fit_with_restrictions' | 'temporarily_unfit' | 'unfit';
+
+export const FITNESS_DECISIONS: Array<{ value: FitnessDecision; label: string }> = [
+  { value: 'fit', label: 'Fit and suitable for employment' },
+  { value: 'fit_with_restrictions', label: 'Fit, with restrictions' },
+  { value: 'temporarily_unfit', label: 'Temporarily unfit' },
+  { value: 'unfit', label: 'Unfit for this role' },
+];
+
+export interface HseRecommendation {
+  decision: FitnessDecision;
+  /** Restrictions or conditions, when the decision carries any. */
+  restrictions: string;
+  /** Free narrative shown above the fitness statement. */
+  notes: string;
+  reviewIntervalMonths: number;
+}
+
+export interface HseFindings {
+  vitals: HseVitals;
+  urinalysis: HseUrinalysis;
+  vision: HseVision;
+  systems: HseSystems;
+  investigations: HseInvestigations;
+}
+
+export interface HseReport {
+  id: string;
+  patientId: string;
+  patientName: string;
+  patientDob: string;
+  createdBy: string;
+  examinedOn: string;
+  recipient: HseRecipient;
+  findings: HseFindings;
+  recommendation: HseRecommendation;
+  status: 'draft' | 'approved';
+  signedBy: string | null;
+  signedAt: string | null;
+  /** Copied at signing, so replacing a signature never rewrites signed reports. */
+  signature: string | null;
+  signerName: string;
+  signerCredentials: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The normal finding for each field, which is what most examinations record. */
+export const HSE_DEFAULTS: HseFindings = {
+  vitals: { bloodPressure: '', pulse: '', weightLb: '', heightCm: '', bmi: '', spo2: '', diascanMgDl: '' },
+  urinalysis: { protein: 'Nil', blood: 'Nil', glucose: 'Nil' },
+  vision: { distanceLeft: 'Normal', distanceRight: 'Normal', colourIshihara: 'Normal', near: 'Normal' },
+  systems: {
+    heartSound: 'Normal', murmur: 'Normal', cardiovascularOther: 'Nil',
+    chestShape: 'Normal', chestMovements: 'Normal', trachea: 'Central', breathSounds: 'Clear',
+    liver: 'Normal', spleen: 'Normal', abdominalScars: 'Nil', hernias: 'Nil',
+    guHernia: 'Nil', varicoseVeins: 'Nil', stdSigns: 'Nil',
+    entExternal: 'Normal', auroscopyRight: 'Normal', auroscopyLeft: 'Normal', hearing: 'Normal',
+  },
+  investigations: {
+    ecg: 'Normal',
+    drugPanel: [
+      { substance: 'Marijuana (THC)', result: 'Negative' },
+      { substance: 'Cocaine (COC)', result: 'Negative' },
+    ],
+    labNote: 'See attached',
+    spirometry: [
+      { label: 'FVC', value: '', percent: '' },
+      { label: 'FEV1', value: '', percent: '' },
+      { label: 'FEV1%', value: '', percent: '' },
+      { label: 'PEF', value: '', percent: '' },
+      { label: 'FEF25', value: '', percent: '' },
+      { label: 'FEF75', value: '', percent: '' },
+    ],
+    spirometryInterpretation: '',
+    audiogram: '',
+  },
+};

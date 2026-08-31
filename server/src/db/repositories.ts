@@ -30,8 +30,12 @@ import type {
   Expense,
   InvoiceSummary,
   ExpenseSummary,
+  HseReport,
+  HseRecipient,
+  HseFindings,
+  HseRecommendation,
 } from '../../../shared/types.ts';
-import { EMPTY_PROFILE, DEFAULT_BRAND } from '../../../shared/types.ts';
+import { EMPTY_PROFILE, DEFAULT_BRAND, HSE_DEFAULTS } from '../../../shared/types.ts';
 
 /* ------------------------------------------------------------------ rows -- */
 
@@ -258,7 +262,12 @@ export const clinicians = {
   },
 
   insert(
-    c: Omit<Clinician, 'role' | 'active' | 'mustChangePassword' | 'createdAt' | 'lastSignInAt'> & {
+    // Signature is omitted here as well as the server-set fields: nobody has
+    // one when their account is created, and it is set later by its owner.
+    c: Omit<
+      Clinician,
+      'role' | 'active' | 'mustChangePassword' | 'createdAt' | 'lastSignInAt' | 'signature'
+    > & {
       passwordHash: string;
       passwordSalt: string;
       role?: ClinicianRole;
@@ -314,6 +323,11 @@ export const clinicians = {
   },
 
   /** How many admins remain active — the last one must not be removed. */
+  /** A clinician's own signature. No route lets anybody set another's. */
+  setSignature(clinicianId: string, signature: string | null): void {
+    db().prepare('UPDATE clinician SET signature = ? WHERE id = ?').run(signature, clinicianId);
+  },
+
   activeAdminCount(): number {
     const r = db()
       .prepare("SELECT COUNT(*) AS n FROM clinician WHERE role = 'admin' AND active = 1")
@@ -333,6 +347,7 @@ function toClinician(r: Row): Clinician {
     mustChangePassword: (r['must_change_password'] as number) === 1,
     createdAt: (r['created_at'] as string | null) ?? null,
     lastSignInAt: (r['last_sign_in_at'] as string | null) ?? null,
+    signature: (r['signature'] as string | null) ?? null,
   };
 }
 
@@ -348,6 +363,7 @@ const EMPTY_CLINIC: Clinic = {
   email: '',
   website: '',
   logo: null,
+  letterhead: null,
   ...DEFAULT_BRAND,
   primaryDoctor: '',
   updatedAt: null,
@@ -367,6 +383,7 @@ export const clinic = {
       email: (r['email'] as string) ?? '',
       website: (r['website'] as string) ?? '',
       logo: (r['logo'] as string | null) ?? null,
+      letterhead: (r['letterhead'] as string | null) ?? null,
       brandDark: (r['brand_dark'] as string) || DEFAULT_BRAND.brandDark,
       brandLight: (r['brand_light'] as string) || DEFAULT_BRAND.brandLight,
       primaryDoctor: (r['primary_doctor'] as string) ?? '',
@@ -378,14 +395,15 @@ export const clinic = {
     db()
       .prepare(
         `INSERT INTO clinic (id, name, legal_name, currency, registration, address, phone, email, website, logo,
-                              brand_dark, brand_light, primary_doctor, updated_at)
-         VALUES ('clinic',?,?,?,?,?,?,?,?,?,?,?,?,?)
+                              letterhead, brand_dark, brand_light, primary_doctor, updated_at)
+         VALUES ('clinic',?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name, legal_name = excluded.legal_name,
            currency = excluded.currency,
            registration = excluded.registration, address = excluded.address,
            phone = excluded.phone, email = excluded.email,
            website = excluded.website, logo = excluded.logo,
+           letterhead = excluded.letterhead,
            brand_dark = excluded.brand_dark, brand_light = excluded.brand_light,
            primary_doctor = excluded.primary_doctor,
            updated_at = excluded.updated_at`,
@@ -400,6 +418,7 @@ export const clinic = {
         input.email,
         input.website,
         input.logo,
+        input.letterhead,
         input.brandDark,
         input.brandLight,
         input.primaryDoctor,
@@ -1829,5 +1848,127 @@ export const expenses = {
       thisYearCents: row['year'] as number,
       totalCount: row['total'] as number,
     };
+  },
+};
+
+/* ---------------------------------------------------- occupational health -- */
+
+function toHse(r: Row, patientName: string, patientDob: string): HseReport {
+  return {
+    id: r['id'] as string,
+    patientId: r['patient_id'] as string,
+    patientName,
+    patientDob,
+    createdBy: r['created_by'] as string,
+    examinedOn: r['examined_on'] as string,
+    recipient: fromJson<HseRecipient>(r['recipient'] as string, { attention: '', company: '', addressLines: [] }),
+    findings: fromJson<HseFindings>(r['findings'] as string, HSE_DEFAULTS),
+    recommendation: fromJson<HseRecommendation>(r['recommendation'] as string, {
+      decision: 'fit', restrictions: '', notes: '', reviewIntervalMonths: 12,
+    }),
+    status: r['status'] as HseReport['status'],
+    signedBy: (r['signed_by'] as string | null) ?? null,
+    signedAt: (r['signed_at'] as string | null) ?? null,
+    signature: (r['signature'] as string | null) ?? null,
+    signerName: (r['signer_name'] as string) ?? '',
+    signerCredentials: (r['signer_credentials'] as string) ?? '',
+    createdAt: r['created_at'] as string,
+    updatedAt: r['updated_at'] as string,
+  };
+}
+
+/** Patient identity is joined in rather than copied, so a corrected name shows. */
+function hseWithPatient(r: Row): HseReport {
+  const p = db().prepare('SELECT name, profile FROM patient WHERE id = ?').get(r['patient_id']) as Row | undefined;
+  const profile = fromJson<PatientProfile>((p?.['profile'] as string) ?? '{}', EMPTY_PROFILE);
+  return toHse(r, (p?.['name'] as string) ?? 'Unknown patient', profile.dateOfBirth ?? '');
+}
+
+export const hseReports = {
+  page(options: { search?: string; status?: string; page: number; pageSize: number }): {
+    items: HseReport[];
+    total: number;
+  } {
+    const where: string[] = [];
+    const args: unknown[] = [];
+
+    if (options.status) {
+      where.push('r.status = ?');
+      args.push(options.status);
+    }
+    if (options.search) {
+      where.push('(p.name LIKE ? OR r.examined_on LIKE ? OR r.recipient LIKE ?)');
+      const like = `%${options.search}%`;
+      args.push(like, like, like);
+    }
+
+    const clause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const counted = db()
+      .prepare(`SELECT COUNT(*) AS n FROM hse_report r JOIN patient p ON p.id = r.patient_id ${clause}`)
+      .get(...args) as Row;
+    const total = (counted['n'] as number) ?? 0;
+
+    const { page } = pageMeta(total, options.page, options.pageSize);
+    const rows = db()
+      .prepare(
+        `SELECT r.* FROM hse_report r JOIN patient p ON p.id = r.patient_id ${clause}
+          ORDER BY r.examined_on DESC, r.rowid DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...args, options.pageSize, (page - 1) * options.pageSize) as Row[];
+
+    return { items: rows.map(hseWithPatient), total };
+  },
+
+  byId(reportId: string): HseReport | null {
+    const r = db().prepare('SELECT * FROM hse_report WHERE id = ?').get(reportId) as Row | undefined;
+    return r ? hseWithPatient(r) : null;
+  },
+
+  insert(report: HseReport): void {
+    db()
+      .prepare(
+        `INSERT INTO hse_report
+           (id, patient_id, created_by, examined_on, recipient, findings, recommendation,
+            status, signed_by, signed_at, signature, signer_name, signer_credentials,
+            created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        report.id, report.patientId, report.createdBy, report.examinedOn,
+        toJson(report.recipient), toJson(report.findings), toJson(report.recommendation),
+        report.status, report.signedBy, report.signedAt, report.signature,
+        report.signerName, report.signerCredentials, report.createdAt, report.updatedAt,
+      );
+  },
+
+  /**
+   * Saves a draft. An approved report is immutable: it has been signed and may
+   * already be with an employer, so changing it would make the copy on file and
+   * the copy in the clinic disagree with nobody able to tell which is current.
+   */
+  update(reportId: string, patch: Pick<HseReport, 'examinedOn' | 'recipient' | 'findings' | 'recommendation'>): boolean {
+    const result = db()
+      .prepare(
+        `UPDATE hse_report
+            SET examined_on = ?, recipient = ?, findings = ?, recommendation = ?, updated_at = ?
+          WHERE id = ? AND status = 'draft'`,
+      )
+      .run(
+        patch.examinedOn, toJson(patch.recipient), toJson(patch.findings),
+        toJson(patch.recommendation), now(), reportId,
+      );
+    return result.changes > 0;
+  },
+
+  approve(reportId: string, signer: { id: string; name: string; credentials: string; signature: string | null }): boolean {
+    const result = db()
+      .prepare(
+        `UPDATE hse_report
+            SET status = 'approved', signed_by = ?, signed_at = ?, signature = ?,
+                signer_name = ?, signer_credentials = ?, updated_at = ?
+          WHERE id = ? AND status = 'draft'`,
+      )
+      .run(signer.id, now(), signer.signature, signer.name, signer.credentials, now(), reportId);
+    return result.changes > 0;
   },
 };

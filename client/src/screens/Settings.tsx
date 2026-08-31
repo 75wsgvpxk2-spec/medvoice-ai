@@ -84,7 +84,10 @@ export function Settings({ clinician }: { clinician: Clinician }) {
       {isAdmin && <TranscriptionSection settings={s} onSave={save} saving={saving} />}
       {isAdmin && <UnitsSection settings={s} onSave={save} saving={saving} />}
       {isAdmin && <KeywordSection settings={s} onSave={save} saving={saving} />}
-      {/* Voice training is per-person, so everybody gets it. */}
+      {/* Voice training and the signature are per-person, so everybody gets
+          both. A signature in particular is never set by an administrator on
+          somebody else's behalf. */}
+      <SignatureSection clinician={clinician} onError={setError} />
       <VoiceTraining onError={setError} />
       {isAdmin && <ThresholdSection onError={setError} />}
       {isAdmin && <ClinicSection settings={s} onSave={save} saving={saving} />}
@@ -999,6 +1002,101 @@ function ClinicSection({
           <p className="hint">The strip along the foot naming each agent as it runs.</p>
         </div>
       </div>
+    </section>
+  );
+}
+
+
+/* ------------------------------------------------------------- signature -- */
+
+/**
+ * The clinician's own signature, applied to documents they sign.
+ *
+ * Only ever their own. A signature is the thing that makes a document theirs,
+ * so there is no administrator route that sets one for somebody else — the
+ * server enforces that too, and this screen simply never offers it.
+ */
+function SignatureSection({
+  clinician,
+  onError,
+}: {
+  clinician: Clinician;
+  onError: (message: string) => void;
+}) {
+  const [signature, setSignature] = useState<string | null>(clinician.signature ?? null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const upload = (file: File) => {
+    if (file.size > 300_000) {
+      onError('That image is too large. Use one under about 300 KB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUri = String(reader.result ?? '');
+      setBusy(true);
+      try {
+        await api.saveSignature(dataUri);
+        setSignature(dataUri);
+      } catch (e) {
+        onError((e as ApiError).message);
+      } finally {
+        setBusy(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await api.saveSignature('');
+      setSignature(null);
+    } catch (e) {
+      onError((e as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card stack">
+      <div className="spread">
+        <h2>Your signature</h2>
+        <span className={`pill ${signature ? 'pill-live' : ''}`}>{signature ? 'On file' : 'Not set'}</span>
+      </div>
+      <p className="hint">
+        Applied to reports you sign. A copy is taken at the moment of signing, so replacing this
+        never changes a document you have already put your name to.
+      </p>
+
+      {signature && (
+        <div className="signature-preview">
+          <img src={signature} alt="Your signature" />
+        </div>
+      )}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) upload(file);
+          e.target.value = '';
+        }}
+      />
+      <div className="row">
+        <button onClick={() => fileRef.current?.click()} disabled={busy}>
+          {busy ? 'Saving…' : signature ? 'Replace signature' : 'Upload signature'}
+        </button>
+        {signature && <button className="quiet" onClick={remove} disabled={busy}>Remove</button>}
+      </div>
+      <p className="hint">
+        PNG, JPEG or WebP, under 300 KB. A photograph of a signature on white paper works well.
+      </p>
     </section>
   );
 }
