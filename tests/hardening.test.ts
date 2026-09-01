@@ -15,6 +15,14 @@ import {
 } from '../server/src/db/repositories.ts';
 import { callAgent } from '../server/src/model/provider.ts';
 import { validate } from '../server/src/model/validate.ts';
+import {
+  assertVerified,
+  verifyIntake,
+  verifyStructuring,
+  verifyClinical,
+  verifyDocumentation,
+  ClaimVerificationError,
+} from '../server/src/model/claims.ts';
 import { activeProvider } from '../server/src/lib/settings.ts';
 import { PROVIDER_PRESETS, DISMISSAL_REASON_VALUES } from '../shared/types.ts';
 import { summariseSpend } from '../server/src/model/spend.ts';
@@ -1170,4 +1178,104 @@ describe('A reply that does not match its schema is refused', () => {
       settings.put('model.provider', 'auto', 'test');
     }
   }, 60_000);
+});
+
+/*
+ * Claims are checked against the inputs that produced them.
+ *
+ * DEVIATIONS item 7: Agent 2 flagged a clean weight field with "medication list
+ * states lisinopril while note describes amlodipine". Lisinopril was in neither
+ * the note, the record, nor the brief — it belongs to a different patient. The
+ * reply was valid JSON and matched its schema. The fix at the time was a
+ * tighter prompt, which is not a control.
+ */
+describe('An agent cannot assert what its inputs do not support', () => {
+  it('rejects the exact fabrication from A2-1', () => {
+    const problems = verifyStructuring(
+      {
+        fieldConfidence: [
+          {
+            field: 'weight',
+            confidence: 'flagged',
+            ambiguity:
+              'Weight given as 81.5 kg with explicit unit, but noting medication list states ' +
+              'lisinopril while note describes amlodipine — medication discrepancy.',
+          },
+        ],
+      },
+      {
+        note: 'Attends for review. Weight 81.5 kg. Continues on amlodipine 10 mg daily.',
+        brief: 'Prior encounters: routine reviews.',
+        knownMedications: ['Amlodipine'],
+      },
+    );
+
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('lisinopril');
+    // Amlodipine is in the note, so it must not be caught alongside it.
+    expect(problems[0]).not.toContain('amlodipine');
+  });
+
+  it('leaves a medication that is genuinely on the record alone', () => {
+    expect(
+      verifyStructuring(
+        {
+          fieldConfidence: [
+            { field: 'objective', confidence: 'flagged', ambiguity: 'Metformin dose not stated.' },
+          ],
+        },
+        { note: 'Continues metformin.', brief: '', knownMedications: [] },
+      ),
+    ).toEqual([]);
+  });
+
+  it('does not fire on ordinary clinical prose', () => {
+    // The check is deliberately narrow: it only looks at drug-shaped words, so
+    // a verifier that rejects legitimate output stays unlikely.
+    expect(
+      verifyStructuring(
+        {
+          fieldConfidence: [
+            {
+              field: 'objective',
+              confidence: 'flagged',
+              ambiguity: 'The measurement is inconsistent with the threshold described and needs confirmation.',
+            },
+          ],
+        },
+        { note: 'Nothing relevant.', brief: '', knownMedications: [] },
+      ),
+    ).toEqual([]);
+  });
+
+  it('refuses an encounter id Agent 1 was never shown', () => {
+    expect(verifyIntake({ selectedEncounterIds: ['enc_1', 'enc_2'] }, ['enc_1', 'enc_2'])).toEqual([]);
+    const problems = verifyIntake({ selectedEncounterIds: ['enc_1', 'enc_elsewhere'] }, ['enc_1']);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('enc_elsewhere');
+  });
+
+  it('refuses a flagType the rules engine never raised', () => {
+    expect(verifyClinical({ findings: [{ flagType: 'hypertension_uncontrolled' }] }, ['hypertension_uncontrolled'])).toEqual([]);
+    const problems = verifyClinical({ findings: [{ flagType: 'sepsis_suspected' }] }, ['hypertension_uncontrolled']);
+    expect(problems[0]).toContain('sepsis_suspected');
+    expect(problems[0]).toContain('rules engine did not raise');
+  });
+
+  it('refuses a gap key that is not in the record', () => {
+    expect(verifyDocumentation({ gaps: [{ gapKey: 'billing:enc_1' }] }, ['billing:enc_1'])).toEqual([]);
+    expect(verifyDocumentation({ gaps: [{ gapKey: 'invented:thing' }] }, ['billing:enc_1'])[0]).toContain('invented:thing');
+  });
+
+  it('stops the run rather than letting an unsupported claim through', () => {
+    expect(() => assertVerified('record_structuring', [])).not.toThrow();
+    expect(() => assertVerified('record_structuring', ['named the medication "lisinopril"'])).toThrow(
+      ClaimVerificationError,
+    );
+    // The message has to say which agent and what, because it reaches a
+    // clinician who needs to know the note was not written up.
+    expect(() => assertVerified('record_structuring', ['named the medication "lisinopril"'])).toThrow(
+      /record_structuring asserted something its inputs do not support/,
+    );
+  });
 });

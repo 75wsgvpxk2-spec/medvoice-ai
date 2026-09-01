@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { id, now } from '../db/index.ts';
 import { patients, encounters, observations, flags, runs } from '../db/repositories.ts';
 import { callAgent, cacheKeyFor } from '../model/provider.ts';
+import { assertVerified, verifyClinical } from '../model/claims.ts';
 import { evaluate, rankScore, urgencyOf, type Finding, type PatientEvidence } from '../clinical/rules.ts';
 import type {
   AgentTrigger,
@@ -186,6 +187,14 @@ export async function assessPatient(
       // do not re-spend on unchanged patients (PF-6).
       cacheKey: cacheKeyFor([AGENT, patient.id, live.map((f) => [f.flagType, f.facts])]),
     });
+    /*
+     * The rules engine decides what is clinically significant; this agent
+     * supplies the words. A flagType it was not handed is one it made up, and
+     * although the lookup below would never match it to a finding, a model
+     * writing about a condition nobody raised is answering a different question
+     * from the one asked.
+     */
+    assertVerified(AGENT, verifyClinical(result.output, live.map((f) => f.flagType)));
     wording = result.output;
   }
 

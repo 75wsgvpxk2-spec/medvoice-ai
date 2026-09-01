@@ -164,11 +164,18 @@ One deployment serves one clinic, and staff at a clinic share a caseload — a
 nurse who cannot see the patient in front of her because a colleague registered
 them is a system nobody will use.
 
-`patients.forClinic()` is what every route and agent now reads.
-`patients.forClinician()` remains for attribution: which clinician added a
-patient, and which one an assessment ran for. The DI-4 test still passes
-unchanged, because that function is unchanged — but it no longer describes the
-access boundary, and saying so here is the point of this note.
+`patients.forClinic()` is what every route and agent now reads. That sentence
+was written before it was true: four routes and the flag board still compared
+`clinician_id`, so a colleague opening a patient somebody else had registered
+was told the patient was not in their population, and the flags screen could be
+empty while the queue was full. A later review found it. The routes now
+authorise on the installation, and `tests/routes.test.ts` proves it over HTTP —
+which nothing could have done before, because no test in the suite made a
+request.
+
+`clinician_id` remains for attribution: which clinician added a patient, and
+which one an assessment ran for. The DI-4 test was rewritten, because it had
+been asserting the per-clinician scoping this note says is not the boundary.
 
 What replaces DI-4's intent is unique user identification
 (§164.312(a)(2)(i)): each person signs in as themselves, deactivation ends
@@ -309,7 +316,22 @@ note, and not in the context brief. It belongs to a different patient.
 dumped and checked — no lisinopril, no other patient's data. The brief was
 correct; the model fabricated the drug name.
 
-**Fixed by** constraining the channel rather than the test. `fieldConfidence`
+**Now also enforced in code.** Constraining the channel was a prompt change, and
+prompt text is not a control — a later review said so, correctly. Every agent
+reply is now checked against the inputs that produced it before anything is read
+out of it (`server/src/model/claims.ts`): Agent 2 may not name a medication that
+appears in neither the note, the brief, nor the record; Agent 1 may not select an
+encounter it was not shown; Agent 3 may not return wording for a flag the rules
+engine did not raise; Agent 4 may not describe a gap that is not in the record.
+A failure stops the run and says so rather than putting an unverifiable sentence
+in front of a clinician.
+
+The medication check is deliberately narrow — it fires only on words shaped like
+drug names, because a verifier that wrongly rejects good clinical output is its
+own patient-safety problem. It catches the exact sentence quoted above, and a
+test replays it.
+
+**Originally fixed by** constraining the channel rather than the test. `fieldConfidence`
 now states in both the prompt and the JSON schema that an entry says one thing
 only — whether that field's own value or unit is clear — that a clear field must
 be marked confident even when something else about the encounter seems worth

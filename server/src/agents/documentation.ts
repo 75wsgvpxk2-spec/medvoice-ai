@@ -8,6 +8,7 @@ import {
   runs,
 } from '../db/repositories.ts';
 import { callAgent, cacheKeyFor } from '../model/provider.ts';
+import { assertVerified, verifyDocumentation } from '../model/claims.ts';
 import { assessMonitoring, mentionsOutstandingInvestigation } from '../clinical/monitoring.ts';
 import type {
   AgentTrigger,
@@ -313,6 +314,9 @@ export async function scanPatient(
     }),
     cacheKey: cacheKeyFor([AGENT, patient.id, gaps.map((g) => [g.gapKey, g.facts])]),
   });
+
+  // Gaps come from the record, not from the model; it only describes them.
+  assertVerified(AGENT, verifyDocumentation(result.output, gaps.map((g) => g.gapKey)));
 
   const raised: DocumentationAlert[] = [];
   let alreadyOpen = 0;

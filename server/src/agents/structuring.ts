@@ -1,4 +1,5 @@
-import { runs } from '../db/repositories.ts';
+import { runs, patients } from '../db/repositories.ts';
+import { assertVerified, verifyStructuring } from '../model/claims.ts';
 import { callAgent, cacheKeyFor } from '../model/provider.ts';
 import type {
   AgentTrigger,
@@ -699,6 +700,21 @@ export async function structureNote(
       deterministic: () => deterministic,
       cacheKey: cacheKeyFor([AGENT, patientId, rawNote]),
     });
+
+    /*
+     * Before anything is read out of the reply: check it did not name a
+     * medication that exists in none of its inputs. This is the A2-1 failure in
+     * DEVIATIONS item 7, where the ambiguity slot carried an invented
+     * lisinopril/amlodipine discrepancy on a note that was clean.
+     */
+    assertVerified(
+      AGENT,
+      verifyStructuring(result.output, {
+        note: rawNote,
+        brief: JSON.stringify(brief),
+        knownMedications: (patients.byId(patientId)?.medications ?? []).map((m) => m.name),
+      }),
+    );
 
     // Guard the contract rather than trusting the reply. Observation types are
     // normalised onto the record's vocabulary, values stripped of any unit the

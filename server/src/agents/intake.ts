@@ -1,5 +1,6 @@
 import { patients, encounters, observations, runs } from '../db/repositories.ts';
 import { callAgent, cacheKeyFor } from '../model/provider.ts';
+import { assertVerified, verifyIntake } from '../model/claims.ts';
 import type { AgentTrigger, ContextBrief, Encounter, Patient } from '../../../shared/types.ts';
 
 /**
@@ -198,6 +199,14 @@ export async function assembleContext(
       },
       cacheKey: cacheKeyFor([AGENT, patientId, rawNote, history.map((e) => e.id)]),
     });
+
+    /*
+     * An id that was not in the list it was shown means the model invented an
+     * encounter. The filter below would drop it, but dropping it silently hides
+     * that the reply is not answering the question asked — and if it invented
+     * one id, the reasoning it wrote alongside is not trustworthy either.
+     */
+    assertVerified(AGENT, verifyIntake(result.output, history.map((e) => e.id)));
 
     // Guard the contract rather than trusting the reply: unknown ids are
     // dropped, and an empty or total selection is corrected to a real subset.
