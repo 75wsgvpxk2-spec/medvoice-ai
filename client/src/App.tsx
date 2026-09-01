@@ -311,12 +311,6 @@ export function App() {
             active={route.name === 'operations' || route.name === 'hse'}
             onClick={() => setRoute({ name: 'operations', screen: 'hub' })}
           />
-          <NavItem
-            label="Settings"
-            icon={<IconSettings />}
-            active={route.name === 'settings'}
-            onClick={() => setRoute({ name: 'settings' })}
-          />
         </nav>
 
         {/* Only the account itself sits at the foot now. */}
@@ -338,6 +332,12 @@ export function App() {
               <span className="who-cred">{clinician.credentials}</span>
             )}
           </span>
+          <NavItem
+            label="Settings"
+            icon={<IconSettings />}
+            active={route.name === 'settings'}
+            onClick={() => setRoute({ name: 'settings' })}
+          />
           <NavItem
             label="Clinic profile"
             icon={<IconClinic />}
