@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { db, id, now } from '../db/index.ts';
 import * as settings from '../lib/settings.ts';
 import { config } from '../lib/config.ts';
+import { validate, type Schema } from './validate.ts';
 import { recordCall } from './spend.ts';
 import { callCompatible } from './compatible.ts';
 import type { AgentName } from '../../../shared/types.ts';
@@ -92,13 +93,21 @@ export function cacheKeyFor(parts: unknown[]): string {
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 32);
 }
 
-function readCache<T>(key: string): T | null {
+function readCache<T>(key: string, schema: unknown): T | null {
   const row = db().prepare('SELECT payload FROM agent_cache WHERE cache_key = ?').get(key) as
     | { payload: string }
     | undefined;
   if (!row) return null;
   try {
-    return JSON.parse(row.payload) as T;
+    const parsed = JSON.parse(row.payload) as unknown;
+    /*
+     * Checked on the way out as well as in. What was written passed validation,
+     * but the cache is a table in a file on disk and a cache hit is a path into
+     * the agents like any other. A miss is the safe answer: the call is simply
+     * made again.
+     */
+    if (validate(parsed, schema as Schema).length > 0) return null;
+    return parsed as T;
   } catch {
     return null;
   }
@@ -131,6 +140,34 @@ export class ModelRefusalError extends Error {
  * unreachable, out of credit, rate limited or rejecting the key now stops the
  * work and says exactly what the provider said.
  */
+/**
+ * Parse a reply and check it against the schema the model was given.
+ *
+ * The schema was always sent and never enforced — both paths cast with `as T`,
+ * which tells the compiler what to assume and checks nothing at runtime. A
+ * reply that failed to match flowed on to the agents intact.
+ *
+ * A shape mismatch is the same class of problem as unparseable JSON: the model
+ * answered, and the answer is unusable. Both raise ModelOutputError.
+ */
+function parseChecked<T>(text: string, schema: unknown, agent: string): T {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new ModelOutputError('The model returned output that was not valid JSON.');
+  }
+
+  const problems = validate(parsed, schema as Schema);
+  if (problems.length > 0) {
+    console.error(`MODEL OUTPUT REJECTED (${agent}): ${problems.join('; ')}`);
+    throw new ModelOutputError(
+      `The model returned output that does not match what ${agent} asked for: ${problems[0]}`,
+    );
+  }
+  return parsed as T;
+}
+
 export class ModelUnavailableError extends Error {
   constructor(
     readonly reason: string,
@@ -175,7 +212,7 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
   const startedAt = Date.now();
 
   if (options.cacheKey) {
-    const hit = readCache<T>(options.cacheKey);
+    const hit = readCache<T>(options.cacheKey, options.schema);
     if (hit !== null) {
       const durationMs = Date.now() - startedAt;
       recordCall({
@@ -221,11 +258,12 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
   /**
    * The provider could not answer, so neither can we.
    *
-   * PF-3's requirement — a failure must not lose the encounter — is met where
-   * it always mattered: the raw note is persisted at submit, before any of
-   * this runs, so the clinician's words survive a failed call and the work can
-   * be retried. What is no longer done is answering anyway with encoded rules
-   * and labelling it agent output.
+   * PF-3's requirement — a failure must not lose the encounter — is met by
+   * `submitEncounter`, which writes the raw note as a `draft` before either
+   * agent runs. That was not true when this comment was first written: the
+   * insert came last, so a failed call here lost the dictation entirely while
+   * this text claimed otherwise. What is no longer done is answering anyway
+   * with encoded rules and labelling it agent output.
    *
    * The reason is recorded against the run and returned to the screen verbatim,
    * because "rate limited" and "the key was rejected" need different actions
@@ -266,12 +304,7 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
       throw error;
     }
 
-    let output: T;
-    try {
-      output = JSON.parse(result.text) as T;
-    } catch {
-      throw new ModelOutputError('The model returned output that was not valid JSON.');
-    }
+    const output = parseChecked<T>(result.text, options.schema, options.agent);
 
     const durationMs = Date.now() - startedAt;
     const costUsd = recordCall({
@@ -332,12 +365,7 @@ export async function callAgent<T>(options: AgentCallOptions<T>): Promise<AgentC
     .map((block) => block.text)
     .join('');
 
-  let output: T;
-  try {
-    output = JSON.parse(text) as T;
-  } catch {
-    throw new ModelOutputError('The model returned output that was not valid JSON.');
-  }
+  const output = parseChecked<T>(text, options.schema, options.agent);
 
   const durationMs = Date.now() - startedAt;
   const usage = {

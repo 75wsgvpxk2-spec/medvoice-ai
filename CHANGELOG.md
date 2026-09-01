@@ -62,6 +62,11 @@ Notable changes. Dates are the day the work landed on `main`.
 - Docker image and compose file.
 
 ### Changed
+- **The suite now tests routes over HTTP.** Every test ran in-process, so no
+  route guard, auth middleware or admin gate was exercised anywhere — which is
+  how four routes came to authorise on the wrong thing unnoticed. The Express
+  app is split into `server/src/app.ts` so tests can mount it, and
+  `tests/routes.test.ts` drives it with real requests.
 - **The platform runs on live models only.** There is no local engine behind
   them any more. A provider that is unreachable, out of credit, rate limited or
   rejecting the key stops the work and shows the provider's own reason, instead

@@ -72,6 +72,47 @@ function migrate(conn: Database.Database): void {
     conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
+  /*
+   * Let a flag be dismissed as 'other'.
+   *
+   * The type union, the API and the interface have all offered four dismissal
+   * reasons while the table's CHECK allowed three, so choosing "another reason"
+   * produced a constraint failure, a 500, and the loss of whatever the
+   * clinician had typed — on the one path FD-3 exists to serve.
+   *
+   * SQLite cannot ALTER a CHECK, and CREATE TABLE IF NOT EXISTS never reapplies
+   * one to a table that already exists, so editing schema.sql fixes only new
+   * installations. The constraint lives in the stored DDL, which is why this
+   * reads sqlite_master rather than PRAGMA table_info — a pragma lists columns
+   * and types and says nothing about constraints.
+   */
+  const flagDdl = (
+    conn.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'risk_flag'").get() as
+      | { sql: string }
+      | undefined
+  )?.sql;
+
+  if (flagDdl && !flagDdl.includes("'other'")) {
+    const columns = (conn.prepare('PRAGMA table_info(risk_flag)').all() as Array<{ name: string }>)
+      .map((c) => c.name)
+      .join(', ');
+    // Named columns rather than SELECT *, so a future column added in a
+    // different order cannot silently shift values into the wrong fields.
+    const rebuild = conn.transaction(() => {
+      conn.exec(flagDdl.replace(
+        "'disagree_with_assessment'",
+        "'disagree_with_assessment','other'",
+      ).replace('CREATE TABLE risk_flag', 'CREATE TABLE risk_flag_rebuilt')
+        .replace('CREATE TABLE IF NOT EXISTS risk_flag', 'CREATE TABLE risk_flag_rebuilt'));
+      conn.exec(`INSERT INTO risk_flag_rebuilt (${columns}) SELECT ${columns} FROM risk_flag`);
+      conn.exec('DROP TABLE risk_flag');
+      conn.exec('ALTER TABLE risk_flag_rebuilt RENAME TO risk_flag');
+      // Dropping the table took its indexes with it.
+      conn.exec('CREATE INDEX IF NOT EXISTS idx_flag_patient ON risk_flag(patient_id, status)');
+    });
+    rebuild();
+  }
+
   // An installation that predates roles has one account, and it is the person
   // who set the clinic up. Leaving them a plain clinician would lock everyone
   // out of user management on the very upgrade that introduces it.

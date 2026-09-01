@@ -215,6 +215,21 @@ export type DismissalReason =
    */
   | 'other';
 
+/**
+ * Every dismissal reason, as data.
+ *
+ * The union, the API's allow-list, the interface and the table's CHECK drifted
+ * apart once — 'other' existed in three of the four and the fourth rejected it
+ * with a 500. Exported so a test can assert the database still agrees with the
+ * vocabulary rather than trusting that it does.
+ */
+export const DISMISSAL_REASON_VALUES: DismissalReason[] = [
+  'not_clinically_relevant',
+  'already_addressed',
+  'disagree_with_assessment',
+  'other',
+];
+
 export interface RiskFlag {
   id: string;
   patientId: string;

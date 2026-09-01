@@ -571,6 +571,47 @@ export const encounters = {
       );
   },
 
+  /** The most recent unstructured draft, so a failed submit can name it. */
+  latestDraftFor(patientId: string): Encounter | null {
+    const r = db()
+      .prepare("SELECT * FROM encounter WHERE patient_id = ? AND status = 'draft' ORDER BY rowid DESC LIMIT 1")
+      .get(patientId) as Row | undefined;
+    return r ? toEncounter(r) : null;
+  },
+
+  /**
+   * Move a draft to awaiting approval once both agents have finished with it.
+   *
+   * Submission writes the raw note first and runs the agents afterwards, so
+   * that a provider failure costs the clinician nothing. This is the other half
+   * of that: the structured sections, the context brief and the status all land
+   * together, because a row carrying agent output while still marked `draft`
+   * would be a third state nothing else in the system understands.
+   */
+  completeStructuring(
+    encounterId: string,
+    structured: Encounter['structured'],
+    fieldConfidence: FieldConfidence[],
+    contextBrief: ContextBrief,
+  ): void {
+    db()
+      .prepare(
+        `UPDATE encounter
+            SET subjective = ?, objective = ?, assessment = ?, plan = ?,
+                field_confidence = ?, context_brief = ?, status = 'awaiting_approval'
+          WHERE id = ? AND status = 'draft'`,
+      )
+      .run(
+        structured.subjective,
+        structured.objective,
+        structured.assessment,
+        structured.plan,
+        toJson(fieldConfidence),
+        toJson(contextBrief),
+        encounterId,
+      );
+  },
+
   updateStructured(
     encounterId: string,
     structured: Encounter['structured'],
@@ -733,18 +774,22 @@ export const flags = {
 
   /** Clears active flags before a fresh assessment writes its replacements. */
   /** Every active flag across one clinician's population, worst urgency first. */
-  activeForClinician(clinicianId: string): RiskFlag[] {
+  /**
+   * Every active flag in this installation.
+   *
+   * The board and the queue must agree. This previously filtered on
+   * `p.clinician_id`, so the queue could be full of critical rows while the
+   * flags screen was empty for anybody who had not registered those patients —
+   * the same split the patient routes had, expressed in SQL.
+   */
+  activeForClinic(): RiskFlag[] {
     return (
       db()
-        .prepare(
-          `SELECT f.* FROM risk_flag f
-             JOIN patient p ON p.id = f.patient_id
-            WHERE p.clinician_id = ? AND f.status = 'active'
-            ORDER BY f.created_at DESC`,
-        )
-        .all(clinicianId) as Row[]
+        .prepare("SELECT * FROM risk_flag WHERE status = 'active' ORDER BY created_at DESC")
+        .all() as Row[]
     ).map(toFlag);
   },
+
 
   clearActiveForPatient(patientId: string): void {
     db().prepare("DELETE FROM risk_flag WHERE patient_id = ? AND status = 'active'").run(patientId);

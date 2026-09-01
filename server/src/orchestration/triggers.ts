@@ -57,6 +57,41 @@ export async function submitEncounter(
   if (!patient) throw new Error(`Patient ${patientId} not found`);
   if (rawNote.trim().length === 0) throw new Error('The note is empty. Enter the encounter note before submitting.');
 
+  /*
+   * The note is written to the record before a single agent runs.
+   *
+   * PF-3 asks that an interrupted loop never costs the clinician what they
+   * entered, and until now this function did the opposite: both agents ran
+   * first and the insert came last, so a provider that was unreachable, out of
+   * credit or rejecting the key threw before anything was stored and the
+   * dictation existed only in a React state variable. One refresh and it was
+   * gone. The schema has carried a `draft` status for exactly this the whole
+   * time; nothing used it.
+   *
+   * So the row goes in first, empty of everything the agents produce, and is
+   * promoted once they succeed. A failure now leaves a draft holding the
+   * clinician's words.
+   */
+  const encounterId = id('enc');
+  encounters.insert({
+    id: encounterId,
+    patientId,
+    clinicianId,
+    date: now().slice(0, 10),
+    // A1-4: stored exactly as entered, and never overwritten.
+    rawNote,
+    structured: { subjective: '', objective: '', assessment: '', plan: '' },
+    fieldConfidence: [],
+    status: 'draft',
+    approvedBy: null,
+    approvedAt: null,
+    version: 1,
+    amendsEncounterId: null,
+    amendedBy: null,
+    amendedAt: null,
+    contextBrief: null,
+  });
+
   publish({ type: 'agent_started', agent: 'intake_and_context', correlationId, patientId });
   const intake = await assembleContext(patientId, rawNote, { trigger: 'encounter_submit', correlationId });
   publish({
@@ -87,25 +122,14 @@ export async function submitEncounter(
     summary: `${flaggedCount} field(s) flagged for review`,
   });
 
-  const encounter: Encounter = {
-    id: id('enc'),
-    patientId,
-    clinicianId,
-    date: now().slice(0, 10),
-    // A1-4: stored exactly as entered, and never overwritten.
-    rawNote,
-    structured: structuring.result.structured,
-    fieldConfidence: structuring.result.fieldConfidence,
-    status: 'awaiting_approval',
-    approvedBy: null,
-    approvedAt: null,
-    version: 1,
-    amendsEncounterId: null,
-    amendedBy: null,
-    amendedAt: null,
-    contextBrief: intake.brief,
-  };
-  encounters.insert(encounter);
+  // Both agents are done, so the draft becomes a note awaiting approval.
+  encounters.completeStructuring(
+    encounterId,
+    structuring.result.structured,
+    structuring.result.fieldConfidence,
+    intake.brief,
+  );
+  const encounter = encounters.byId(encounterId)!;
 
   return {
     encounter,
@@ -155,6 +179,15 @@ export async function approveEncounter(
   const encounter = encounters.byId(encounterId);
   if (!encounter) throw new Error(`Encounter ${encounterId} not found`);
   if (encounter.status === 'approved') throw new Error('That encounter has already been approved.');
+  /*
+   * A draft is a note whose agents never finished — the structuring failed and
+   * the row was kept so the words were not lost. Approving one would save an
+   * encounter with empty S/O/A/P into the record and hand it to Agents 3 and 4
+   * as history.
+   */
+  if (encounter.status === 'draft') {
+    throw new Error('This note has not been structured yet. Submit it again before approving.');
+  }
 
   const correlationId = id('corr');
   const asOf = options.asOf ?? new Date();

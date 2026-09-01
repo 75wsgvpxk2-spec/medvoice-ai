@@ -90,7 +90,7 @@ sequenceDiagram
 
     C->>UI: dictates or types the note
     UI->>S: submit
-    S->>DB: raw note saved first<br/>(survives any later failure)
+    S->>DB: raw note saved as a draft<br/>(survives any later failure)
     S->>A1: which prior encounters matter?
     A1-->>S: selection, with reasons
     S->>A2: structure into S/O/A/P
@@ -120,6 +120,11 @@ sequenceDiagram
         C->>UI: ③ resolves a gap: system acts · already done · not applicable
     end
 ```
+
+The note reaches the record before either agent runs, as a `draft`. If the
+model is unavailable the draft keeps the clinician's words and the submission
+can be retried; only a completed structuring promotes it to awaiting approval,
+and only approval saves it.
 
 Agents 3 and 4 genuinely run in parallel. Millisecond timestamps cannot prove
 that, so each run records how many agents were already in flight when it began

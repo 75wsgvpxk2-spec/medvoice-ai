@@ -982,9 +982,19 @@ api.post('/patients', requireClinician, (req: AuthedRequest, res) => {
 
 api.get('/patients/:id', requireClinician, (req: AuthedRequest, res) => {
   const patient = patients.byId(param(req, 'id'));
-  // DI-4: a patient outside this clinician's population is not found.
-  if (!patient || patient.clinicianId !== req.clinicianId) {
-    res.status(404).json({ error: 'That patient is not in your population.' });
+  /*
+   * The access boundary is the installation, not who registered the patient.
+   *
+   * One deployment serves one clinic, and staff at a clinic share a caseload —
+   * this is what `patients.forClinic()` documents and what the queue and
+   * dashboard have always done. These routes disagreed with it: they compared
+   * `clinician_id`, so a nurse opening the patient in front of them got "not in
+   * your population" because a colleague had registered them. `clinician_id`
+   * stays on the row as attribution, and the audit trail still names whoever
+   * acted — unique user identification does not require hiding the caseload.
+   */
+  if (!patient) {
+    res.status(404).json({ error: 'That patient is not in this clinic.' });
     return;
   }
 
@@ -1011,8 +1021,9 @@ api.get('/patients/:id', requireClinician, (req: AuthedRequest, res) => {
  */
 api.get('/patients/:id/report', requireClinician, (req: AuthedRequest, res) => {
   const patient = patients.byId(param(req, 'id'));
-  if (!patient || patient.clinicianId !== req.clinicianId) {
-    res.status(404).json({ error: 'That patient is not in your population.' });
+  // Scoped to the installation; see GET /patients/:id.
+  if (!patient) {
+    res.status(404).json({ error: 'That patient is not in this clinic.' });
     return;
   }
 
@@ -1056,8 +1067,9 @@ api.get('/patients/:id/report', requireClinician, (req: AuthedRequest, res) => {
 
 api.post('/patients/:id/encounters', requireClinician, async (req: AuthedRequest, res) => {
   const patient = patients.byId(param(req, 'id'));
-  if (!patient || patient.clinicianId !== req.clinicianId) {
-    res.status(404).json({ error: 'That patient is not in your population.' });
+  // Scoped to the installation; see GET /patients/:id.
+  if (!patient) {
+    res.status(404).json({ error: 'That patient is not in this clinic.' });
     return;
   }
 
@@ -1066,8 +1078,16 @@ api.post('/patients/:id/encounters', requireClinician, async (req: AuthedRequest
     const result = await submitEncounter(patient.id, note ?? '', req.clinicianId!);
     res.json(result);
   } catch (error) {
+    /*
+     * The note itself is already on the record as a draft by this point, so the
+     * failure is about the agents rather than the clinician's work. Saying so —
+     * and returning the id — is the difference between "your dictation is gone"
+     * and "we could not structure it yet, try again".
+     */
+    const draft = encounters.latestDraftFor(patient.id);
     res.status(400).json({
       error: error instanceof Error ? error.message : 'The note could not be processed.',
+      ...(draft ? { encounterId: draft.id, noteSaved: true } : {}),
     });
   }
 });
@@ -1171,7 +1191,7 @@ const DISMISSAL_REASONS: DismissalReason[] = [
  * flag to find out would make the screen slower the more work there is to do.
  */
 api.get('/flags', requireClinician, (req: AuthedRequest, res) => {
-  const open = flags.activeForClinician(req.clinicianId!);
+  const open = flags.activeForClinic();
   const byId = new Map(patients.forClinic().map((p) => [p.id, p]));
 
   const URGENCY_RANK: Record<string, number> = { critical: 0, watch: 1, stable: 2 };
@@ -1272,8 +1292,9 @@ api.post('/flags/:id/dismiss', requireClinician, async (req: AuthedRequest, res)
   }
 
   const patient = patients.byId(flag.patientId);
-  if (!patient || patient.clinicianId !== req.clinicianId) {
-    res.status(404).json({ error: 'That patient is not in your population.' });
+  // Scoped to the installation; see GET /patients/:id.
+  if (!patient) {
+    res.status(404).json({ error: 'That patient is not in this clinic.' });
     return;
   }
 

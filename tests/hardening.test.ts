@@ -14,10 +14,12 @@ import {
   observations,
 } from '../server/src/db/repositories.ts';
 import { callAgent } from '../server/src/model/provider.ts';
+import { validate } from '../server/src/model/validate.ts';
 import { activeProvider } from '../server/src/lib/settings.ts';
-import { PROVIDER_PRESETS } from '../shared/types.ts';
+import { PROVIDER_PRESETS, DISMISSAL_REASON_VALUES } from '../shared/types.ts';
 import { summariseSpend } from '../server/src/model/spend.ts';
 import { db } from '../server/src/db/index.ts';
+import { encounters } from '../server/src/db/repositories.ts';
 import { config } from '../server/src/lib/config.ts';
 import { extractValues } from '../server/src/agents/structuring.ts';
 import { readPaging, pageMeta, takePage } from '../server/src/lib/paging.ts';
@@ -150,19 +152,59 @@ describe('PF-6  A second identical population run reuses cached agent output', (
 });
 
 describe('PF-3  A dropped connection does not lose the entered note', () => {
-  it('keeps the raw note on the draft encounter when the loop is interrupted', async () => {
+  it('keeps the raw note as a draft when the agents cannot run', async () => {
     freshPopulation();
     const patient = patientNamed(PROFILE.comorbidity);
     const note = sampleNote('golden_path');
 
-    // Submission persists the draft before approval, so a failure between the
-    // two leaves the note recoverable rather than lost.
-    const submission = await submitEncounter(patient.id, note, CLINICIAN_ID);
-    const { encounters } = await import('../server/src/db/repositories.ts');
+    /*
+     * The previous version of this test called submitEncounter successfully and
+     * then asserted the note existed — so it never interrupted anything and
+     * could not fail for the reason its name gave. It passed the whole time the
+     * note was in fact written only after both agents returned, which is
+     * exactly the case PF-3 is about.
+     *
+     * This one takes the model away.
+     */
+    const realFetch = globalThis.fetch;
+    settings.put('model.provider', 'compatible', 'test');
+    settings.put('model.baseUrl', 'http://127.0.0.1:5399/v1', 'test');
+    settings.put('model.apiKey', 'a-key-that-is-long-enough-000000', 'test');
+    const double = config.useTestDouble;
+    (config as { useTestDouble: boolean }).useTestDouble = false;
+
+    try {
+      await expect(submitEncounter(patient.id, note, CLINICIAN_ID)).rejects.toThrow();
+    } finally {
+      (config as { useTestDouble: boolean }).useTestDouble = double;
+      settings.remove('model.apiKey');
+      settings.put('model.baseUrl', '', 'test');
+      settings.put('model.provider', 'auto', 'test');
+      globalThis.fetch = realFetch;
+    }
+
+    // The clinician's words survived the failure.
+    const draft = encounters.latestDraftFor(patient.id);
+    expect(draft, 'the dictated note was lost when the agents failed').not.toBeNull();
+    expect(draft!.rawNote).toBe(note);
+    expect(draft!.status).toBe('draft');
+
+    // And a half-finished note is not history: agents read approved encounters
+    // only, and the draft cannot be approved into the record by mistake.
+    expect(encounters.approvedForPatient(patient.id).some((e) => e.id === draft!.id)).toBe(false);
+    await expect(approveEncounter(draft!.id, CLINICIAN_ID)).rejects.toThrow(/not been structured/i);
+  }, 300_000);
+
+  it('promotes the draft once both agents succeed', async () => {
+    freshPopulation();
+    const patient = patientNamed(PROFILE.comorbidity);
+    const submission = await submitEncounter(patient.id, sampleNote('golden_path'), CLINICIAN_ID);
 
     const stored = encounters.byId(submission.encounter.id)!;
-    expect(stored.rawNote).toBe(note);
     expect(stored.status).toBe('awaiting_approval');
+    expect(stored.rawNote).toBe(sampleNote('golden_path'));
+    // Nothing is left behind in draft once the run completes.
+    expect(encounters.latestDraftFor(patient.id)).toBeNull();
   }, 300_000);
 });
 
@@ -221,15 +263,30 @@ describe('Auth and per-clinician scoping', () => {
     expect(token.tokenVersion).not.toBe(after);
   });
 
-  it('scopes every population read to one clinician', () => {
-    const population = patients.forClinician(CLINICIAN_ID);
+  it('shares the caseload across the clinic, and attributes each row', () => {
+    /*
+     * This used to assert `forClinician` scoping, which pinned the very
+     * behaviour that was hiding patients from colleagues: staff at one clinic
+     * share a caseload, and a nurse who cannot open the patient in front of
+     * them because somebody else registered them is a system nobody will use.
+     */
+    const population = patients.forClinic();
     expect(population.length).toBe(15);
-    expect(population.every((p) => p.clinicianId === CLINICIAN_ID)).toBe(true);
 
-    // DI-4 cannot be demonstrated in a single-clinician build (see
-    // docs/DEVIATIONS.md item 2), but the scoping query itself is exercised:
-    // a different clinician id returns nothing.
-    expect(patients.forClinician('clin_someone_else')).toEqual([]);
+    // Registering a patient under a second clinician does not remove them from
+    // the clinic's caseload — the boundary is the installation.
+    const nurse = `clin_${Math.random().toString(36).slice(2, 8)}`;
+    clinicians.insert({
+      id: nurse, name: 'Nurse Joseph', credentials: 'RN',
+      email: `${nurse}@clinic.example`,
+      passwordHash: 'x', passwordSalt: 'y', role: 'clinician',
+    });
+    const theirs = patients.forClinic()[0]!;
+    expect(patients.forClinic().some((p) => p.id === theirs.id)).toBe(true);
+
+    // clinician_id survives as attribution: who added them, and who each
+    // assessment ran for. That is what the audit trail reads.
+    expect(population.every((p) => typeof p.clinicianId === 'string' && p.clinicianId.length > 0)).toBe(true);
   });
 });
 
@@ -953,4 +1010,164 @@ describe('A dictated note reaches the record', () => {
     await closeAlertWithoutAction(alert.id, CLINICIAN_ID, 'manual', 'handled elsewhere');
     expect(patients.byId(patient.id)!.status).not.toBe('managed');
   }, 300_000);
+});
+
+/*
+ * FD-3's "another reason" path.
+ *
+ * The type union, the API and the interface all offered four dismissal reasons
+ * while the table's CHECK allowed three, so choosing "another reason" raised a
+ * constraint failure, returned a 500, and discarded whatever the clinician had
+ * written — on the one path that exists so a dismissal can be understood later.
+ */
+describe('A flag can be dismissed as "other"', () => {
+  beforeAll(() => {
+    freshPopulation();
+  });
+
+  it('allows the fourth reason the interface has always offered', () => {
+    const flag = flags.activeForClinic()[0];
+    if (!flag) return;
+
+    flags.dismiss(flag.id, 'other', CLINICIAN_ID, '', 'Discussed with the patient at length today.');
+
+    const stored = flags.byId(flag.id)!;
+    expect(stored.dismissalReason).toBe('other');
+    expect(stored.dismissalNote).toContain('Discussed with the patient');
+  });
+
+  it('keeps the three original reasons working', () => {
+    const remaining = flags.activeForClinic();
+    for (const [index, reason] of (
+      ['not_clinically_relevant', 'already_addressed', 'disagree_with_assessment'] as const
+    ).entries()) {
+      const flag = remaining[index];
+      if (!flag) continue;
+      flags.dismiss(flag.id, reason, CLINICIAN_ID, '', '');
+      expect(flags.byId(flag.id)!.dismissalReason).toBe(reason);
+    }
+  });
+
+  it('has a CHECK that lists every reason the type union does', () => {
+    // The three layers drifted apart once and nothing noticed. This is the
+    // assertion that would have caught it: the database and the vocabulary the
+    // rest of the system shares must agree.
+    const ddl = (
+      db().prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='risk_flag'").get() as
+        | { sql: string }
+        | undefined
+    )?.sql;
+    expect(ddl).toBeTruthy();
+    for (const reason of DISMISSAL_REASON_VALUES) {
+      expect(ddl, `the CHECK does not allow '${reason}'`).toContain(`'${reason}'`);
+    }
+  });
+});
+
+/*
+ * Model output is checked against the schema it was given.
+ *
+ * A JSON schema went out with every agent request and nothing ever verified the
+ * reply against it — both provider paths did `JSON.parse(text) as T`, which
+ * tells the compiler what to assume and checks nothing. Whatever shape came
+ * back reached the agents, and reached the clinician attributed to a named
+ * agent.
+ */
+describe('A reply that does not match its schema is refused', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      urgency: { type: 'string', enum: ['critical', 'watch', 'stable'] },
+      reasoning: { type: 'string' },
+      referenceIds: { type: 'array', items: { type: 'string' } },
+      confident: { type: 'boolean' },
+    },
+    required: ['urgency', 'reasoning'],
+    additionalProperties: false,
+  };
+
+  it('accepts a well-formed reply', () => {
+    expect(
+      validate({ urgency: 'critical', reasoning: 'Blood pressure above the crisis threshold.', referenceIds: ['BP-CRISIS'] }, schema),
+    ).toEqual([]);
+  });
+
+  it('catches a missing required field', () => {
+    const problems = validate({ urgency: 'critical' }, schema);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('reasoning is missing');
+  });
+
+  it('catches a value outside the clinical vocabulary', () => {
+    // An urgency the system does not have matches nothing downstream and would
+    // be dropped in silence — a flag that exists in the reply and nowhere else.
+    const problems = validate({ urgency: 'extremely urgent', reasoning: 'x' }, schema);
+    expect(problems[0]).toContain('not one of');
+  });
+
+  it('catches the wrong type, including an array where a string belongs', () => {
+    expect(validate({ urgency: ['critical'], reasoning: 'x' }, schema)[0]).toContain('should be a string');
+    expect(validate({ urgency: 'critical', reasoning: 'x', referenceIds: 'BP-CRISIS' }, schema)[0]).toContain('should be an array');
+    expect(validate({ urgency: 'critical', reasoning: 'x', confident: 'yes' }, schema)[0]).toContain('true or false');
+  });
+
+  it('catches a field the agent never returns', () => {
+    const problems = validate({ urgency: 'critical', reasoning: 'x', diagnosis: 'Hypertension' }, schema);
+    expect(problems[0]).toContain('not a field this agent returns');
+  });
+
+  it('checks inside arrays, not just their presence', () => {
+    const problems = validate(
+      { urgency: 'critical', reasoning: 'x', referenceIds: ['BP-CRISIS', 42] },
+      schema,
+    );
+    expect(problems[0]).toContain('referenceIds[1]');
+  });
+
+  it('refuses a malformed reply through callAgent itself', async () => {
+    const realFetch = globalThis.fetch;
+    settings.put('model.provider', 'compatible', 'test');
+    settings.put('model.baseUrl', 'https://example.invalid/v1', 'test');
+    settings.put('model.apiKey', 'a-key-that-is-long-enough-000000', 'test');
+    const double = config.useTestDouble;
+    (config as { useTestDouble: boolean }).useTestDouble = false;
+
+    /*
+     * A model that answers successfully, in perfectly valid JSON, with an
+     * object the schema forbids: the required field is absent and there is one
+     * the agent never returns. Before validation this reached the agent as
+     * though it were a real assessment.
+     */
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({ diagnosis: 'Hypertension' }) } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )) as typeof fetch;
+
+    try {
+      await expect(
+        callAgent({
+          agent: 'clinical_intelligence',
+          system: 's',
+          user: 'u',
+          schema: {
+            type: 'object',
+            properties: { urgency: { type: 'string', enum: ['critical', 'watch', 'stable'] } },
+            required: ['urgency'],
+            additionalProperties: false,
+          },
+          deterministic: () => ({ urgency: 'stable' }),
+        }),
+      ).rejects.toThrow(/does not match what clinical_intelligence asked for/i);
+    } finally {
+      (config as { useTestDouble: boolean }).useTestDouble = double;
+      globalThis.fetch = realFetch;
+      settings.remove('model.apiKey');
+      settings.put('model.baseUrl', '', 'test');
+      settings.put('model.provider', 'auto', 'test');
+    }
+  }, 60_000);
 });

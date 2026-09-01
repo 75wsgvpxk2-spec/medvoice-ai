@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS risk_flag (
   status                   TEXT NOT NULL DEFAULT 'active'
                              CHECK (status IN ('active','resolved','dismissed')),
   dismissal_reason         TEXT CHECK (dismissal_reason IS NULL OR dismissal_reason IN
-                             ('not_clinically_relevant','already_addressed','disagree_with_assessment')),
+                             ('not_clinically_relevant','already_addressed','disagree_with_assessment','other')),
   dismissed_by             TEXT REFERENCES clinician(id),
   dismissed_at             TEXT,
   confidence               TEXT NOT NULL DEFAULT 'high' CHECK (confidence IN ('high','uncertain')),
