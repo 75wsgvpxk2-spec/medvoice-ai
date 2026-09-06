@@ -222,6 +222,9 @@ const SELF_RECORDING = new Set([
   'PUT /users/:id/role',
   'POST /users/:id/reset-password',
   'POST /auth/password',
+  // Whether a turn belongs in the trail depends on mode and whether a patient
+  // was actually in scope — Research mode must produce zero rows.
+  'POST /assistant/chat',
 ]);
 
 export function auditTrail(req: Request, res: Response, next: NextFunction): void {

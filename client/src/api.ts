@@ -27,6 +27,8 @@ import type {
   ExpenseSummary,
   HseReport,
   HseFindings,
+  AssistantChatRequest,
+  AssistantChatResponse,
 } from '../../shared/types';
 
 export class ApiError extends Error {
@@ -434,6 +436,12 @@ export const api = {
     post<{ newEncounterId: string; version: number }>(`/encounters/${encounterId}/amend`, { edits }),
 
   previewResolution: (alertId: string) => request<ResolutionPreview>(`/alerts/${alertId}/preview`),
+
+  /* -------------------------------------------------- clinical assistant -- */
+
+  assistantChat: (input: AssistantChatRequest) =>
+    post<AssistantChatResponse>('/assistant/chat', input),
+
   /* ------------------------------------------------ occupational health -- */
 
   hseReports: (params: { search?: string; status?: string; page?: number; pageSize?: number } = {}) => {

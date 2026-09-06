@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { config } from '../lib/config.ts';
 import { buildReports, type Period } from '../lib/reports.ts';
 import { prefillFor, suggestedExamDate } from '../lib/hse-prefill.ts';
-import type { Product, Invoice, InvoiceLine, Expense, HseReport } from '../../../shared/types.ts';
+import type { Product, Invoice, InvoiceLine, Expense, HseReport, AssistantTurn } from '../../../shared/types.ts';
 import { EXPENSE_CATEGORIES } from '../../../shared/types.ts';
 import { readPaging, pageMeta, takePage } from '../lib/paging.ts';
 import {
@@ -53,6 +53,7 @@ import {
   closeAlertWithoutAction,
 } from '../agents/resolution.ts';
 import { assessPatientRun, fingerprintOf, rerankQueue } from '../agents/clinical-intelligence.ts';
+import { answerResearch, answerPatient, answerPlanning } from '../agents/assistant.ts';
 import { evaluate } from '../clinical/rules.ts';
 import { toFhirBundle, toMarkdown } from '../clinical/report.ts';
 import { assessMonitoring } from '../clinical/monitoring.ts';
@@ -1061,6 +1062,98 @@ api.get('/patients/:id/report', requireClinician, (req: AuthedRequest, res) => {
   }
 
   res.json({ markdown: toMarkdown(source), patientName: patient.name });
+});
+
+const ASSISTANT_MODES = new Set(['patient', 'research', 'planning']);
+
+function truncateForAudit(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * The Clinical Assistant. Self-recorded in audit-trail.ts (SELF_RECORDING)
+ * because whether a turn belongs in the audit trail depends on the mode and
+ * whether a patient was actually in scope — Research mode must produce zero
+ * rows, since it never has PHI to disclose in the first place.
+ */
+api.post('/assistant/chat', requireClinician, async (req: AuthedRequest, res) => {
+  const body = req.body as { mode?: string; patientId?: string; history?: AssistantTurn[]; message?: string };
+  const mode = body.mode;
+
+  if (!mode || !ASSISTANT_MODES.has(mode)) {
+    res.status(400).json({ error: 'Unknown assistant mode.' });
+    return;
+  }
+  const question = (body.message ?? '').trim();
+  if (!question) {
+    res.status(400).json({ error: 'Ask a question first.' });
+    return;
+  }
+  // A cap on how much of the client-side transcript is replayed per call.
+  const history = Array.isArray(body.history) ? body.history.slice(-20) : [];
+
+  const clinician = clinicians.byId(req.clinicianId!);
+  const clinicianName = clinician?.name ?? 'Unknown clinician';
+
+  try {
+    if (mode === 'research') {
+      // No patient is looked up in this branch at all — nothing to leak.
+      const { reply } = await answerResearch(question, history);
+      res.json({ reply, mode, usedPatientContext: false });
+      return;
+    }
+
+    if (mode === 'patient') {
+      const patientId = body.patientId;
+      if (!patientId) {
+        res.status(400).json({ error: 'Open a patient to use Patient mode.' });
+        return;
+      }
+      const patient = patients.byId(patientId);
+      if (!patient) {
+        res.status(404).json({ error: 'That patient is not in this clinic.' });
+        return;
+      }
+      const result = await answerPatient(patientId, question, history, clinicianName);
+      if (!result) {
+        res.status(404).json({ error: 'That patient is not in this clinic.' });
+        return;
+      }
+      audit.record({
+        actor: req.clinicianId!,
+        actorName: clinicianName,
+        action: 'assistant.query',
+        entityType: 'patient',
+        entityId: patientId,
+        patientId,
+        summary: `Asked the Clinical Assistant (Patient mode) about ${patient.name}: "${truncateForAudit(question, 200)}"`,
+        detail: { mode, question, reply: result.reply },
+      });
+      res.json({ reply: result.reply, mode, usedPatientContext: true, patientId });
+      return;
+    }
+
+    // Planning mode: patientId is optional.
+    const patientId = body.patientId;
+    const patient = patientId ? patients.byId(patientId) : null;
+    const result = await answerPlanning(patientId && patient ? patientId : undefined, question, history, clinicianName);
+
+    if (patientId && patient) {
+      audit.record({
+        actor: req.clinicianId!,
+        actorName: clinicianName,
+        action: 'assistant.query',
+        entityType: 'patient',
+        entityId: patientId,
+        patientId,
+        summary: `Asked the Clinical Assistant (Planning mode) about ${patient.name}: "${truncateForAudit(question, 200)}"`,
+        detail: { mode, question, reply: result.reply },
+      });
+    }
+    res.json({ reply: result.reply, mode, usedPatientContext: Boolean(patientId && patient), patientId });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'The assistant could not answer.' });
+  }
 });
 
 /* ------------------------------------------------------------- encounter -- */

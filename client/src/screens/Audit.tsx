@@ -19,6 +19,7 @@ const ACTION_LABELS: Record<string, string> = {
   'settings.updated': 'Settings changed',
   'pronunciation.recorded': 'Voice sample recorded',
   'pronunciation.removed': 'Voice sample removed',
+  'assistant.query': 'Clinical Assistant question',
   'other.changed': 'Other change',
 };
 

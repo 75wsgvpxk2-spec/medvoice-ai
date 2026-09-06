@@ -535,6 +535,34 @@ export interface ModelCall {
 }
 
 // ---------------------------------------------------------------------------
+// Clinical Assistant — floating chat widget
+// ---------------------------------------------------------------------------
+
+export type AssistantMode = 'patient' | 'research' | 'planning';
+
+export interface AssistantTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface AssistantChatRequest {
+  mode: AssistantMode;
+  /** Only meaningful for 'patient' and 'planning'; ignored server-side for 'research'. */
+  patientId?: string;
+  /** Prior turns from this client-side-only session, oldest first. Excludes the new question. */
+  history: AssistantTurn[];
+  message: string;
+}
+
+export interface AssistantChatResponse {
+  reply: string;
+  mode: AssistantMode;
+  /** True when a patient's record was actually loaded and folded into the prompt. */
+  usedPatientContext: boolean;
+  patientId?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Section 5 — Agent contracts
 // ---------------------------------------------------------------------------
 

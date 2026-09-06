@@ -9,6 +9,7 @@ import { NewEncounter } from './screens/Encounter';
 import { Login, PopulationList, AgentActivity } from './screens/Views';
 import { NewPatient } from './screens/NewPatient';
 import { Logo } from './components/Logo';
+import { Assistant } from './components/Assistant';
 import { applyBranding } from './lib/branding';
 import { ClinicProfile } from './screens/ClinicProfile';
 import { Dashboard } from './screens/Dashboard';
@@ -513,6 +514,14 @@ export function App() {
       {showStrip && (
         <AgentStrip lanes={lanes} connected={connected} onOpenActivity={() => setRoute({ name: 'activity' })} />
       )}
+
+      <Assistant
+        currentPatientId={
+          route.name === 'patient' || route.name === 'encounter' || route.name === 'hse'
+            ? route.patientId
+            : undefined
+        }
+      />
       </div>
     </div>
   );
