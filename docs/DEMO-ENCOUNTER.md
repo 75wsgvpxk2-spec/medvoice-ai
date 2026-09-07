@@ -263,11 +263,22 @@ is refusing to answer with encoded rules and call it agent output, which is the
 behaviour you want in front of an audience — say so, and it becomes a beat
 rather than a stumble.
 
-**The reliable way to demo is with no API key at all.** Clear it in Settings and
-the deterministic engine answers every time, instantly and free. On the Beat 2
-dictation it produces a correct four-section split and extracts all four values
-with their units. Only the prose *phrasing* differs from the live model; every
-clinical claim the demo makes is unchanged.
+**The reliable way to demo is on the encoded engine.** Clearing the API key is
+not enough on its own — with no provider the agents stop and say so, which is
+deliberate: a clinic must never mistake encoded stand-ins for model output. To
+reach the engine, set the flag the test suite uses, in `.env`:
+
+```
+MODEL_TEST_DOUBLE=1
+```
+
+Restart the server. It will print `TEST STAND-INS (MODEL_TEST_DOUBLE) — not a
+model` on boot, and refuse to start at all if `NODE_ENV` is production. On the
+Beat 2 dictation it produces a correct four-section split and extracts all four
+values with their units. Only the prose *phrasing* differs from a live model;
+every clinical claim the demo makes is unchanged.
+
+Take the flag back out before this is ever pointed at real records.
 
 The wording of the Beat 2 dictation above is deliberate: keeping the negatives
 in the same sentence as "she feels well" is what keeps them in Subjective rather
