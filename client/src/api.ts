@@ -244,6 +244,29 @@ export interface Transparency {
   degradedReasons: Array<{ reason: string; calls: number; lastAt: string }>;
 }
 
+/**
+ * The clinical assistant.
+ *
+ * Three questions a clinician asks between patients: what does this record
+ * say, what does our reference say, and what are the sensible next steps.
+ * `basis` is what the answer was drawn from — it is how the clinician checks
+ * the answer against the record, so it is never optional and never hidden.
+ */
+export type AssistantMode = 'patient' | 'research' | 'planning';
+
+export interface AssistantReply {
+  answer: string;
+  basis: string[];
+  /** The record did not settle the question. Shown, never smoothed over. */
+  uncertain: boolean;
+  mode: AssistantMode;
+  patientId: string | null;
+  patientName: string | null;
+  /** No model was configured, so the local engine answered. */
+  deterministic: boolean;
+  degradedReason?: string;
+}
+
 export interface SettingsView {
   settings: ClinicSettings;
   apiKeySource: 'settings' | 'environment' | 'none';
@@ -562,6 +585,9 @@ export const api = {
       `/automations/${id}/run`,
       {},
     ),
+
+  assistant: (input: { mode: AssistantMode; patientId: string | null; question: string }) =>
+    post<AssistantReply>('/assistant', input),
 
   settings: () => request<SettingsView>('/settings'),
   thresholds: () => request<{ thresholds: ThresholdRow[] }>('/thresholds'),

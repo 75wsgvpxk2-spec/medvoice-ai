@@ -1,0 +1,1234 @@
+/* Clinical command room ----------------------------------------------------
+   Two palettes live in this file, and they must not be confused.
+
+   The room is light: white panels on pale grey-blue, because a clinical
+   surface has to be the brightest thing in a workspace. The application it
+   sits on is dark. So every interface inside the room re-declares the design
+   tokens locally rather than inheriting them — the same components, the same
+   markup, one scope lighter. Urgency colour is untouched by any of it: red,
+   amber and green still mean exactly what they mean everywhere else. */
+
+.command-room {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #c3ccd4;
+  color: #123a54;
+  font-family: var(--font-ui);
+}
+
+.command-room .cr-canvas {
+  position: absolute;
+  inset: 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.command-room .cr-canvas:active {
+  cursor: grabbing;
+}
+
+/* Top bar ---------------------------------------------------------------- */
+
+.command-room .cr-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-4);
+  padding: 14px clamp(16px, 3vw, 34px);
+  pointer-events: none;
+}
+
+.command-room .cr-topbar > * {
+  pointer-events: auto;
+}
+
+.command-room .cr-identity {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 7px 15px 7px 7px;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 82%);
+  box-shadow: 0 6px 20px rgb(24 60 88 / 12%);
+  backdrop-filter: blur(14px);
+}
+
+.command-room .cr-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: #eaf4fb;
+}
+
+.command-room .cr-mark img {
+  max-width: 26px;
+  max-height: 26px;
+  object-fit: contain;
+}
+
+.command-room .cr-identity strong {
+  display: block;
+  font-size: 13px;
+  color: #10344c;
+}
+
+.command-room .cr-identity small {
+  display: block;
+  color: #67879b;
+  font-size: 10px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.command-room .cr-session {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 16px;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 82%);
+  box-shadow: 0 6px 20px rgb(24 60 88 / 12%);
+  backdrop-filter: blur(14px);
+  color: #4d7189;
+  font-size: 12px;
+}
+
+.command-room .cr-demo {
+  padding: 4px 10px;
+  border: 1px solid #f0d9ac;
+  border-radius: var(--radius-pill);
+  background: #fdf4e7;
+  color: #7d4603;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.command-room .cr-divider {
+  width: 1px;
+  height: 15px;
+  background: rgb(57 126 157 / 24%);
+}
+
+.command-room .cr-live {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10745a;
+  box-shadow: 0 0 0 4px rgb(16 116 90 / 14%);
+}
+
+.command-room .cr-live.is-down {
+  background: #a45c04;
+  box-shadow: 0 0 0 4px rgb(164 92 4 / 14%);
+}
+
+/* The navigation rail ---------------------------------------------------- */
+
+.command-room .cr-rail-wrap {
+  position: absolute;
+  bottom: 22px;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.command-room .cr-rail-wrap > * {
+  pointer-events: auto;
+}
+
+.command-room .cr-rail {
+  display: flex;
+  gap: 2px;
+  padding: 6px;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 12px 34px rgb(24 60 88 / 18%);
+  backdrop-filter: blur(16px);
+  max-width: min(94vw, 720px);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.command-room .cr-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.command-room .cr-rail-item {
+  min-height: 38px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: #5c7f94;
+  font-size: 13px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.command-room .cr-rail-item:hover {
+  background: #eaf4fb;
+  color: #1b5f86;
+}
+
+.command-room .cr-rail-item.is-active {
+  background: #1e7bc8;
+  color: #fff;
+  font-weight: 650;
+  box-shadow: 0 4px 12px rgb(30 123 200 / 34%);
+}
+
+.command-room .cr-rail-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.command-room .cr-hint {
+  color: #5b7d92;
+  font-size: 12px;
+}
+
+.command-room .cr-ask,
+.command-room .cr-leave {
+  min-height: 40px;
+  padding: 0 22px;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.command-room .cr-ask {
+  border: 0;
+  background: #1e7bc8;
+  color: #fff;
+  box-shadow: 0 8px 20px rgb(30 123 200 / 30%);
+}
+
+.command-room .cr-ask.is-open {
+  background: #0f3355;
+}
+
+.command-room .cr-leave {
+  border: 1px solid rgb(30 123 200 / 20%);
+  background: rgb(255 255 255 / 92%);
+  color: #2b6d8f;
+}
+
+/* MedVoice AI's composer ------------------------------------------------------- */
+
+.command-room .cr-composer {
+  position: absolute;
+  bottom: 124px;
+  left: 50%;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  width: min(94vw, 580px);
+  max-height: calc(100vh - 230px);
+  overflow: hidden;
+  transform: translateX(-50%);
+  padding: 0;
+  border: 1px solid rgb(96 160 192 / 22%);
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 96%);
+  box-shadow: 0 22px 54px rgb(24 60 88 / 22%);
+  backdrop-filter: blur(18px);
+}
+
+.command-room .cr-composer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgb(24 90 130 / 12%);
+}
+
+.command-room .cr-composer-head strong {
+  color: #10344c;
+  font-size: 15px;
+}
+
+.command-room .cr-composer-close {
+  min-height: 30px;
+  width: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #5f8da3;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* The assistant is the application's own component, dropped into the room. It
+   re-declares the light tokens for the same reason the focus panel does. */
+.command-room .cr-composer .assistant {
+  --surface: #ffffff;
+  --surface-sunken: #f3f8fb;
+  --ink: #10344c;
+  --ink-secondary: #35617d;
+  --ink-muted: #6f8ea1;
+  --line: rgb(24 90 130 / 13%);
+  --line-strong: rgb(24 90 130 / 24%);
+
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.command-room .cr-composer input {
+  flex: 1;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid #cfe0ea;
+  border-radius: var(--radius);
+  background: #f8fbfd;
+  color: #123a54;
+  font-size: 14px;
+}
+
+.command-room .cr-mic {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid #cfe0ea;
+  border-radius: var(--radius);
+  background: #fff;
+  color: #2b6d8f;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.command-room .cr-mic.is-live {
+  border-color: #c0272d;
+  background: #fdeeef;
+  color: #8c1c21;
+}
+
+.command-room .cr-composer-reply {
+  margin: 0;
+  padding: 10px 16px 0;
+  color: #16506f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.command-room .cr-composer-note {
+  margin: 0;
+  padding: 10px 16px 14px;
+  color: #6f8ea1;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.command-room .cr-notice {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  z-index: 21;
+  transform: translateX(-50%);
+  padding: 9px 18px;
+  border: 1px solid #f0d9ac;
+  border-radius: var(--radius-pill);
+  background: #fdf4e7;
+  color: #7d4603;
+  font-size: 12.5px;
+  box-shadow: 0 10px 26px rgb(24 60 88 / 14%);
+}
+
+/* Panels ----------------------------------------------------------------- */
+
+.command-room .cr-panel {
+  /* Each panel answers questions about its own width, not the window's. The
+     room holds surfaces from 250 to 660 pixels across at the same physical
+     scale, and a layout tuned for the triage wall is unreadable on the audit
+     archive. The queries below are the panel adapting to its own box. */
+  container-type: inline-size;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 20px 22px;
+  border-radius: 16px;
+  background: #fff;
+  color: #123a54;
+  font-family: var(--font-ui);
+  overflow: hidden;
+  /* The face already exists as geometry behind this; the shadow is only here
+     to lift the interface off it by a millimetre or two. */
+  box-shadow: inset 0 0 0 1px rgb(140 180 205 / 22%);
+}
+
+.command-room .cr-panel.is-active {
+  box-shadow: inset 0 0 0 1.5px rgb(30 123 200 / 32%);
+}
+
+.command-room .cr-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.command-room .cr-panel-titles h3 {
+  margin: 0;
+  color: #10344c;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.command-room .cr-panel-titles p {
+  margin: 3px 0 0;
+  color: #6f8ea1;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.command-room .cr-open {
+  flex: none;
+  min-height: 30px;
+  padding: 0 13px;
+  border: 1px solid rgb(30 123 200 / 18%);
+  border-radius: var(--radius-pill);
+  background: #eaf4fb;
+  color: #1b6ba8;
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.command-room .cr-open:hover {
+  background: #dbedf9;
+}
+
+/* Rows ------------------------------------------------------------------- */
+
+.command-room .cr-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* Flex rather than a fixed three-column grid: the triage wall's rows carry a
+   rank and the records wall's do not, and a missing grid item let the status
+   pill stretch across the width of the row it was meant to sit at the end of. */
+.command-room .cr-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.command-room .cr-row:hover {
+  background: #f4f9fd;
+  border-color: #dceaf4;
+}
+
+.command-room .cr-row.is-selected {
+  background: #eaf4fb;
+  border-color: rgb(30 123 200 / 30%);
+}
+
+.command-room .cr-rank {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: #eef4f9;
+  color: #46708a;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.command-room .cr-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.command-room .cr-row-name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: #10344c;
+  font-size: 14px;
+  font-weight: 620;
+}
+
+.command-room .cr-row-name em {
+  color: #7c96a7;
+  font-size: 11.5px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.command-room .cr-row-reason {
+  display: block;
+  overflow: hidden;
+  color: #64879b;
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status. Colour is never alone — the word is always beside it (PA-1). */
+
+.command-room .cr-pill {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid;
+  border-radius: var(--radius-pill);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: capitalize;
+}
+
+.command-room .cr-pill-critical { border-color: #f3ccce; background: #fdeeef; color: #8c1c21; }
+.command-room .cr-pill-watch { border-color: #f2ddbd; background: #fdf4e7; color: #7d4603; }
+.command-room .cr-pill-managed { border-color: #bfe3d7; background: #e8f6f1; color: #0b5844; }
+.command-room .cr-pill-stable { border-color: #dde4ec; background: #f1f4f8; color: #4d5763; }
+
+.command-room .cr-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+}
+
+.command-room .cr-dot-critical { background: #c0272d; }
+.command-room .cr-dot-watch { background: #a45c04; }
+.command-room .cr-dot-managed { background: #10745a; }
+.command-room .cr-dot-stable { background: #5b6b7a; }
+
+/* Lines, chips and the small print --------------------------------------- */
+
+.command-room .cr-rows-tight .cr-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 2px;
+  border-bottom: 1px solid #edf3f7;
+  font-size: 12.5px;
+  color: #46708a;
+}
+
+.command-room .cr-line:last-child {
+  border-bottom: 0;
+}
+
+.command-room .cr-line strong {
+  color: #10344c;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.command-room .cr-line strong.is-watch {
+  color: #a45c04;
+}
+
+.command-room .cr-line strong em {
+  color: #7c96a7;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.command-room .cr-line-audit {
+  justify-content: flex-start;
+}
+
+.command-room .cr-audit-time {
+  flex: none;
+  color: #7c96a7;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.command-room .cr-audit-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-room .cr-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.command-room .cr-chip {
+  min-height: 30px;
+  padding: 0 13px;
+  border: 1px solid #dceaf4;
+  border-radius: var(--radius-pill);
+  background: #f7fbfd;
+  color: #3a708e;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.command-room .cr-chip:hover {
+  border-color: rgb(30 123 200 / 30%);
+  background: #eaf4fb;
+}
+
+.command-room .cr-search {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 13px;
+  border: 1px solid #dceaf4;
+  border-radius: 10px;
+  background: #f8fbfd;
+  color: #123a54;
+  font-size: 13px;
+}
+
+.command-room .cr-quiet {
+  color: #7c96a7;
+  font-size: 12px;
+}
+
+.command-room .cr-empty {
+  padding: 14px 2px;
+}
+
+.command-room .cr-empty p {
+  margin: 0 0 4px;
+  color: #10344c;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.command-room .cr-empty span {
+  color: #7c96a7;
+  font-size: 12px;
+}
+
+.command-room .cr-alert {
+  padding: 9px 12px;
+  border: 1px solid #f0d9ac;
+  border-radius: 10px;
+  background: #fdf4e7;
+  color: #7d4603;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.command-room .cr-panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid #edf3f7;
+  color: #7c96a7;
+  font-size: 11.5px;
+}
+
+.command-room .cr-primary,
+.command-room .cr-quiet-btn {
+  min-height: 34px;
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.command-room .cr-primary {
+  border: 0;
+  background: #1e7bc8;
+  color: #fff;
+  box-shadow: 0 4px 12px rgb(30 123 200 / 28%);
+}
+
+.command-room .cr-primary:disabled {
+  background: #a9c6da;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.command-room .cr-quiet-btn {
+  border: 1px solid #dceaf4;
+  background: #fff;
+  color: #3a708e;
+}
+
+.command-room .cr-desk {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.command-room .cr-desk-patient {
+  margin: 0;
+  color: #10344c;
+  font-size: 17px;
+  font-weight: 680;
+}
+
+/* MedVoice AI's tag and the patient card --------------------------------------- */
+
+.command-room .cr-core-tag,
+.command-room .cr-hologram-tag,
+.command-room .cr-hologram-card {
+  border: 1px solid rgb(140 180 205 / 26%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 95%);
+  box-shadow: 0 14px 34px rgb(24 60 88 / 20%);
+  color: #123a54;
+  font-family: var(--font-ui);
+  text-align: left;
+}
+
+.command-room .cr-core-tag {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 148px;
+  padding: 10px 16px;
+  cursor: pointer;
+}
+
+.command-room .cr-core-tag strong {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.command-room .cr-core-tag > span {
+  color: #6f8ea1;
+  font-size: 11.5px;
+}
+
+.command-room .cr-core-tag .cr-core-agents:empty {
+  display: none;
+}
+
+.command-room .cr-core-tag .cr-core-agents {
+  margin-top: 3px;
+  color: #1b6ba8;
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.command-room .cr-core-tag.state-error > span { color: #7d4603; }
+.command-room .cr-core-tag.state-offline > span { color: #5b6b7a; }
+
+.command-room .cr-hologram-tag {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 11px 17px;
+}
+
+.command-room .cr-hologram-tag strong { font-size: 14px; }
+.command-room .cr-hologram-tag span { color: #7c96a7; font-size: 11.5px; }
+
+.command-room .cr-hologram-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 260px;
+  padding: 16px;
+}
+
+.command-room .cr-hologram-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.command-room .cr-hologram-name strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.command-room .cr-hologram-modules {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.command-room .cr-module {
+  padding: 7px 8px;
+  border: 1px solid #e7eff5;
+  border-radius: 9px;
+  background: #f8fbfd;
+}
+
+.command-room .cr-module.is-watch {
+  border-color: #f2ddbd;
+  background: #fdf4e7;
+}
+
+.command-room .cr-module strong {
+  display: block;
+  color: #10344c;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.command-room .cr-module span {
+  color: #7c96a7;
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.command-room .cr-hologram-flags {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.command-room .cr-hologram-flags li {
+  display: flex;
+  align-items: baseline;
+  padding: 4px 0;
+  color: #46708a;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.command-room .cr-hologram-actions {
+  display: flex;
+  gap: 7px;
+}
+
+/* Focus mode -------------------------------------------------------------
+   The existing screens, unchanged, on a light ground. The whole application is
+   built on design tokens, so re-declaring them here is enough to move a screen
+   from the dark shell into a bright room without touching the screen itself.
+   Urgency tokens are deliberately not among them. */
+
+.command-room .room-focus {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: clamp(12px, 3vw, 40px);
+  background: rgb(120 146 166 / 46%);
+  backdrop-filter: blur(5px);
+}
+
+.command-room .room-focus-panel {
+  --ground: #f4f9fc;
+  --surface: #ffffff;
+  --surface-sunken: #f2f7fb;
+  --surface-raised: #ffffff;
+  --ink: #10344c;
+  --ink-secondary: #35617d;
+  --ink-muted: #6f8ea1;
+  --line: rgb(24 90 130 / 13%);
+  --line-strong: rgb(24 90 130 / 26%);
+
+  display: flex;
+  flex-direction: column;
+  width: min(1240px, 100%);
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 70%);
+  border-radius: 20px;
+  background: var(--ground);
+  color: var(--ink);
+  box-shadow: 0 40px 90px rgb(16 45 68 / 32%);
+}
+
+.command-room .room-focus-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: none;
+  min-height: 54px;
+  padding: 0 18px;
+  border-bottom: 1px solid rgb(24 90 130 / 12%);
+  background: rgb(255 255 255 / 88%);
+  backdrop-filter: blur(12px);
+}
+
+.command-room .room-focus-bar .focus-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #5f8da3;
+  font-size: 12.5px;
+}
+
+.command-room .room-focus-bar .focus-breadcrumb strong {
+  color: #10344c;
+  font-weight: 650;
+}
+
+.command-room .room-focus-bar .focus-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10745a;
+}
+
+.command-room .room-focus-bar .focus-close {
+  min-height: 34px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: #1e7bc8;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.command-room .room-focus-bar .focus-close span {
+  margin-left: 8px;
+  opacity: 0.7;
+  font-size: 10px;
+}
+
+.command-room .room-focus-body {
+  flex: 1;
+  min-height: 0;
+  padding: clamp(16px, 2.5vw, 32px);
+  overflow: auto;
+}
+
+/* The room is decoration around a clinical document; only the document
+   prints. */
+@media print {
+  .cr-canvas,
+  .cr-topbar,
+  .cr-rail-wrap,
+  .cr-composer,
+  .cr-notice,
+  .room-focus-bar {
+    display: none !important;
+  }
+
+  .command-room,
+  .room-focus,
+  .room-focus-panel,
+  .room-focus-body {
+    position: static;
+    overflow: visible;
+    height: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .cr-session > span:nth-child(2),
+  .cr-divider {
+    display: none;
+  }
+
+  .cr-rail-foot {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .cr-hint {
+    order: 3;
+    width: 100%;
+    text-align: center;
+  }
+}
+
+/* Panels adapt to their own size -----------------------------------------
+   Physical type size stays constant across the room — 14px is the same number
+   of millimetres on every surface — so these queries change density and
+   layout, not legibility: a small panel loses its sub-line and its padding
+   before it loses a word of clinical text. */
+
+.command-room .cr-panel-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 14px;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.command-room .cr-panel-cover span {
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  background: rgb(16 52 76 / 78%);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 650;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.command-room .cr-panel-cover:hover span,
+.command-room .cr-panel-cover:focus-visible span {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.command-room .cr-panel-cover:hover {
+  background: rgb(30 123 200 / 7%);
+}
+
+@container (max-width: 480px) {
+  .command-room .cr-panel {
+    gap: 8px;
+    padding: 15px 16px;
+  }
+
+  .command-room .cr-panel-titles h3 {
+    font-size: 16px;
+  }
+
+  .command-room .cr-panel-titles p {
+    font-size: 11px;
+  }
+
+  .command-room .cr-row {
+    padding: 7px 8px;
+    gap: 9px;
+  }
+
+  .command-room .cr-hologram-modules,
+  .command-room .cr-module span {
+    font-size: 9px;
+  }
+}
+
+@container (max-width: 340px) {
+  .command-room .cr-panel {
+    gap: 7px;
+    padding: 13px 14px;
+  }
+
+  /* Under this width the head cannot hold a title and a button side by side
+     without one of them wrapping mid-word. */
+  .command-room .cr-panel-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .command-room .cr-open {
+    align-self: flex-start;
+  }
+
+  .command-room .cr-panel-titles h3 {
+    font-size: 15px;
+  }
+
+  .command-room .cr-chips {
+    gap: 5px;
+  }
+
+  .command-room .cr-chip {
+    min-height: 26px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+}
+
+@container (max-height: 240px) {
+  /* Short panels lose the sub-line before they lose a row of clinical text. */
+  .command-room .cr-panel-titles p {
+    display: none;
+  }
+}
+
+/* Patient room ------------------------------------------------------------
+   The six surfaces around the figure. They carry more text per line than the
+   overview panels do, because at this distance the clinician is reading rather
+   than scanning. */
+
+.command-room .cr-flag {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 6px 2px;
+  border-bottom: 1px solid #edf3f7;
+  color: #35617d;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.command-room .cr-flag:last-child {
+  border-bottom: 0;
+}
+
+/* A reference id is provenance, not prose: it stays quiet and monospaced so
+   the eye can find it without the sentence having to carry it. */
+.command-room .cr-ref {
+  color: #6f8ea1;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.command-room .cr-line strong em.is-watch,
+.command-room .cr-flag em.is-watch {
+  color: #a45c04;
+  font-style: normal;
+  font-weight: 650;
+}
+
+.command-room .cr-line-audit .cr-audit-summary {
+  color: #46708a;
+}
+
+/* The two desk monitors ---------------------------------------------------
+   These are screens on desks, so they look like screens: a row of counts you
+   can read across a room, and the agent pipeline in the order it runs. */
+
+.command-room .cr-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.command-room .cr-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 9px 11px;
+  border: 1px solid #e3edf4;
+  border-radius: 10px;
+  background: #f8fbfd;
+  text-align: left;
+  cursor: pointer;
+}
+
+.command-room .cr-tile:hover {
+  border-color: rgb(30 123 200 / 30%);
+  background: #eaf4fb;
+}
+
+.command-room .cr-tile strong {
+  color: #10344c;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.command-room .cr-tile span {
+  color: #35617d;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.command-room .cr-tile em {
+  color: #7c96a7;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.command-room .cr-pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.command-room .cr-stage {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #f6fafc;
+  font-size: 11px;
+}
+
+.command-room .cr-stage-n {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  background: #e3edf4;
+  color: #46708a;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.command-room .cr-stage-name {
+  overflow: hidden;
+  color: #35617d;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-room .cr-stage-state {
+  color: #7c96a7;
+  font-size: 10px;
+}
+
+/* Agent state is reported, not decorated. Amber is a failure the clinician
+   has to know about; green is work that finished. */
+.command-room .cr-stage.is-running { background: #eaf4fb; }
+.command-room .cr-stage.is-running .cr-stage-n { background: #1e7bc8; color: #fff; }
+.command-room .cr-stage.is-running .cr-stage-state { color: #1b6ba8; font-weight: 650; }
+.command-room .cr-stage.is-success .cr-stage-n { background: #d7ece4; color: #0b5844; }
+.command-room .cr-stage.is-failure { background: #fdf4e7; }
+.command-room .cr-stage.is-failure .cr-stage-n { background: #a45c04; color: #fff; }
+.command-room .cr-stage.is-failure .cr-stage-state { color: #7d4603; font-weight: 650; }
+
+/* While the room is still arriving. Plain, centred, and gone in a moment —
+   a spinner over a blank screen tells the clinician nothing they cannot see. */
+.room-loading {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}

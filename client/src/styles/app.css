@@ -2658,7 +2658,12 @@ tbody tr:hover { background: var(--brand-wash); }
 
 @media print {
   /* Only the document prints. The shell, the wizard and every control go. */
-  .shell, .sidebar, .strip, .demo-banner, .wizard-steps, .no-print { display: none !important; }
+  /* Keep the shell in the print tree: .hse-doc is rendered inside it, so
+     hiding the ancestor produces a completely blank PDF. Hide only the
+     navigation and other non-document chrome instead. */
+  .sidebar, .strip, .demo-banner, .wizard-steps, .no-print,
+  .command-room, .room-focus-bar { display: none !important; }
+  .workspace, .main, .room-main { position: static; overflow: visible; max-width: none; }
   .hse-preview { padding: 0; background: none; overflow: visible; }
   .hse-doc { width: auto; box-shadow: none; padding: 0; margin: 0; }
   .hse-break-avoid { break-inside: avoid; page-break-inside: avoid; }
@@ -2666,4 +2671,212 @@ tbody tr:hover { background: var(--brand-wash); }
      followed by an orphaned name. */
   .hse-signature { break-inside: avoid; page-break-inside: avoid; }
   @page { margin: 14mm; }
+}
+
+/* Command room ----------------------------------------------------------
+   The spatial shell lives in styles/command-room.css, next to the React that
+   draws it. Only the print rule above still names its classes, so that a
+   clinical document printed from inside the room comes out as a document. */
+
+/* Clinical assistant ------------------------------------------------------
+   A panel that reads the record back. It is deliberately quieter than the
+   clinical surfaces around it: the answer is a starting point, and the record
+   underneath it is the thing that is true. Nothing in here uses an urgency
+   colour, because nothing in here is an urgency. */
+
+.assistant-launch {
+  position: fixed;
+  right: var(--gap-5);
+  bottom: var(--gap-5);
+  z-index: 30;
+  min-height: 46px;
+  padding: 0 var(--gap-5);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--brand-gradient);
+  color: var(--ink-onbrand);
+  font-weight: 600;
+  box-shadow: var(--shadow-brand);
+}
+
+.assistant-dock {
+  position: fixed;
+  right: var(--gap-5);
+  bottom: var(--gap-5);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - var(--gap-5) * 2));
+  max-height: min(620px, calc(100vh - var(--gap-6)));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.assistant-dock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--gap-3) var(--gap-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.assistant-dock-head strong {
+  font-size: var(--text-lg);
+}
+
+.assistant-dock-close {
+  min-height: 32px;
+  width: 32px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.assistant {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-3);
+  min-height: 0;
+  padding: var(--gap-4);
+}
+
+.assistant-modes {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-sunken);
+}
+
+.assistant-mode {
+  flex: 1;
+  min-height: 34px;
+  padding: 0 var(--gap-3);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 550;
+}
+
+.assistant-mode.active {
+  background: var(--surface);
+  color: var(--brand-blue);
+  font-weight: 650;
+  box-shadow: var(--shadow-xs);
+}
+
+.assistant-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-4);
+  min-height: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.assistant.is-compact .assistant-scroll {
+  max-height: 30vh;
+}
+
+.assistant-blurb,
+.assistant-thinking {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.assistant-question {
+  margin: 0 0 var(--gap-2);
+  padding: var(--gap-2) var(--gap-3);
+  border-radius: var(--radius) var(--radius) var(--radius) 4px;
+  background: var(--brand-wash);
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 550;
+}
+
+.assistant-answer p {
+  margin: 0 0 var(--gap-2);
+  font-family: var(--font-clinical);
+  font-size: var(--text-base);
+  line-height: 1.65;
+}
+
+/* Uncertainty and degradation are stated in words, not implied by a colour. */
+.assistant-flag {
+  padding: var(--gap-2) var(--gap-3);
+  border: 1px solid var(--watch-line);
+  border-radius: var(--radius-sm);
+  background: var(--watch-ground);
+  color: var(--watch-ink);
+  font-family: var(--font-ui) !important;
+  font-size: var(--text-sm) !important;
+}
+
+.assistant-basis summary {
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: var(--text-xs);
+}
+
+.assistant-basis ul {
+  margin: var(--gap-2) 0 0;
+  padding-left: var(--gap-4);
+  color: var(--ink-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.assistant-compose {
+  display: flex;
+  gap: var(--gap-2);
+  align-items: flex-end;
+}
+
+.assistant-compose textarea {
+  flex: 1;
+  min-width: 0;
+  padding: var(--gap-2) var(--gap-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+  font-size: var(--text-sm);
+  resize: vertical;
+}
+
+.assistant-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assistant-mic.live {
+  border-color: var(--critical-line);
+  background: var(--critical-ground);
+  color: var(--critical-ink);
+}
+
+.assistant-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+@media (max-width: 640px) {
+  .assistant-dock {
+    right: var(--gap-3);
+    left: var(--gap-3);
+    bottom: var(--gap-3);
+    width: auto;
+  }
 }
