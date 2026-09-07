@@ -2658,7 +2658,12 @@ tbody tr:hover { background: var(--brand-wash); }
 
 @media print {
   /* Only the document prints. The shell, the wizard and every control go. */
-  .shell, .sidebar, .strip, .demo-banner, .wizard-steps, .no-print { display: none !important; }
+  /* Keep the shell in the print tree: .hse-doc is rendered inside it, so
+     hiding the ancestor produces a completely blank PDF. Hide only the
+     navigation and other non-document chrome instead. */
+  .sidebar, .strip, .demo-banner, .wizard-steps, .no-print,
+  .command-room, .room-focus-bar { display: none !important; }
+  .workspace, .main, .room-main { position: static; overflow: visible; max-width: none; }
   .hse-preview { padding: 0; background: none; overflow: visible; }
   .hse-doc { width: auto; box-shadow: none; padding: 0; margin: 0; }
   .hse-break-avoid { break-inside: avoid; page-break-inside: avoid; }
@@ -2832,4 +2837,182 @@ button.primary {
 
 @media (max-width: 720px) {
   .workspace::after { inset: 8px; border-radius: 18px; }
+}
+
+/* Command room / focus mode ---------------------------------------------- */
+
+.room-mode {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.room-mode .sidebar {
+  display: none;
+}
+
+.room-mode .workspace {
+  min-height: 100vh;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 78% 15%, rgb(141 222 255 / 48%), transparent 30rem),
+    radial-gradient(circle at 8% 90%, rgb(197 237 255 / 54%), transparent 32rem),
+    linear-gradient(135deg, #eefaff 0%, #d6f0fc 46%, #effaff 100%);
+}
+
+.room-mode .workspace::before {
+  opacity: 0.42;
+  background-image:
+    linear-gradient(rgb(36 144 191 / 9%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(36 144 191 / 9%) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, black, transparent 95%);
+}
+
+.room-mode .workspace::after {
+  inset: 16px;
+  border-color: rgb(32 126 171 / 14%);
+  box-shadow: inset 0 0 90px rgb(255 255 255 / 56%);
+}
+
+.command-room {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+  color: #123a54;
+  isolation: isolate;
+}
+
+.room-skyline,
+.room-skyline::before,
+.room-skyline::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.room-skyline::before {
+  content: '';
+  background: linear-gradient(165deg, transparent 0 45%, rgb(255 255 255 / 78%) 45.2% 45.5%, transparent 45.7% 100%);
+  opacity: .6;
+}
+
+.room-skyline::after {
+  content: '';
+  background: linear-gradient(180deg, transparent 55%, rgb(102 177 211 / 18%) 100%);
+}
+
+.skyline-grid {
+  position: absolute;
+  inset: auto 0 0;
+  height: 42%;
+  background:
+    linear-gradient(rgb(59 148 184 / 15%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(59 148 184 / 15%) 1px, transparent 1px);
+  background-size: 64px 42px;
+  transform: perspective(500px) rotateX(58deg) scale(1.25);
+  transform-origin: bottom;
+  mask-image: linear-gradient(to top, black, transparent 88%);
+}
+
+.skyline-glow { position: absolute; border-radius: 50%; filter: blur(12px); }
+.glow-one { width: 340px; height: 340px; right: 13%; top: 10%; background: rgb(68 192 237 / 20%); }
+.glow-two { width: 260px; height: 260px; left: 12%; bottom: 2%; background: rgb(82 148 226 / 16%); }
+
+.room-hud,
+.room-footer {
+  position: absolute;
+  left: clamp(24px, 5vw, 76px);
+  right: clamp(24px, 5vw, 76px);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.room-hud { top: 28px; }
+.room-brand, .room-session { display: flex; align-items: center; gap: 12px; }
+.room-brand strong { display: block; font-size: 14px; letter-spacing: .02em; }
+.room-brand small { display: block; color: #6591a9; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.room-brand-mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; color: white; font-size: 12px; font-weight: 800; background: linear-gradient(145deg, #197eb3, #52c4e8); box-shadow: 0 8px 18px rgb(21 122 174 / 24%), inset 0 1px 0 rgb(255 255 255 / 60%); }
+.room-session { color: #6591a9; font-size: 12px; }
+.live-dot, .focus-live { width: 7px; height: 7px; border-radius: 50%; background: #1aa87b; box-shadow: 0 0 0 4px rgb(26 168 123 / 12%); }
+.room-divider { width: 1px; height: 18px; background: rgb(57 126 157 / 22%); }
+.room-mode-button { min-height: 32px; margin-left: 10px; padding: 0 12px; border: 1px solid rgb(41 129 170 / 20%); border-radius: 999px; background: rgb(255 255 255 / 48%); color: #2e6e8f; font-size: 12px; box-shadow: 0 4px 12px rgb(31 111 145 / 8%); }
+
+.room-copy { position: absolute; z-index: 2; left: clamp(24px, 9vw, 150px); top: 20%; max-width: 420px; }
+.room-kicker { margin: 0 0 12px; color: #2388b5; font-size: 12px; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
+.room-copy h1 { margin: 0; color: #123a54; font-size: clamp(2.7rem, 5.2vw, 5.4rem); font-weight: 700; line-height: .95; letter-spacing: -.07em; }
+.room-copy h1 span { color: #2e9bc5; }
+.room-copy p:last-child { max-width: 330px; margin-top: 22px; color: #63879b; font-size: 14px; line-height: 1.6; }
+
+.room-floor { position: absolute; inset: 0; z-index: 1; }
+.room-station { position: absolute; display: flex; flex-direction: column; align-items: flex-start; width: 205px; min-height: 148px; padding: 17px; text-align: left; border: 1px solid rgb(94 169 201 / 23%); border-radius: 22px; background: linear-gradient(145deg, rgb(255 255 255 / 84%), rgb(224 246 255 / 62%)); color: #173f58; box-shadow: 0 20px 46px rgb(43 117 148 / 12%), inset 0 1px 0 rgb(255 255 255 / 88%); backdrop-filter: blur(14px); transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease; }
+.room-station:hover { transform: translateY(-7px) rotateX(1deg); border-color: rgb(41 147 190 / 46%); box-shadow: 0 26px 54px rgb(34 116 151 / 20%), 0 0 0 5px rgb(66 175 216 / 8%), inset 0 1px 0 white; }
+.station-triage { left: 49%; top: 19%; width: 240px; min-height: 174px; }
+.station-patients { right: 12%; top: 35%; }
+.station-care { left: 46%; bottom: 17%; }
+.station-operations { right: 9%; bottom: 16%; }
+.station-docs { left: 19%; bottom: 15%; }
+.station-audit { left: 7%; top: 42%; }
+.station-icon { display: grid; place-items: center; width: 37px; height: 37px; margin-bottom: 18px; border: 1px solid rgb(54 154 194 / 25%); border-radius: 12px; background: rgb(255 255 255 / 68%); color: #2286b1; }
+.station-icon svg { width: 20px; height: 20px; }
+.station-label { font-size: 14px; font-weight: 750; }
+.station-detail { margin-top: 5px; color: #7292a4; font-size: 11px; }
+.station-badge { margin-top: 10px; padding: 4px 7px; border-radius: 999px; background: rgb(255 245 231 / 92%); color: #a45c04; font-size: 10px; font-weight: 750; }
+.station-critical .station-icon { color: #c0272d; border-color: rgb(192 39 45 / 22%); }
+.station-arrow { position: absolute; right: 16px; top: 16px; color: #68a9c2; font-size: 18px; }
+
+.room-console { position: absolute; left: 39%; top: 42%; display: grid; place-items: center; width: 135px; height: 135px; border: 1px solid rgb(51 151 194 / 20%); border-radius: 50%; background: radial-gradient(circle, rgb(255 255 255 / 88%), rgb(204 238 251 / 68%)); box-shadow: 0 28px 60px rgb(44 125 159 / 18%), inset 0 1px 0 white; }
+.console-ring { position: absolute; inset: 10px; border: 1px dashed rgb(44 157 198 / 40%); border-radius: 50%; animation: room-spin 22s linear infinite; }
+.console-core { display: grid; place-items: center; color: #167ca7; font-size: 12px; font-weight: 800; letter-spacing: .12em; }
+.console-core small { margin-top: 4px; color: #6a9aab; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.console-action { position: absolute; top: 145px; min-height: 30px; padding: 0 10px; border: 0; border-radius: 999px; background: rgb(255 255 255 / 64%); color: #43819a; font-size: 10px; white-space: nowrap; }
+@keyframes room-spin { to { transform: rotate(360deg); } }
+
+.room-footer { bottom: 25px; color: #7194a6; font-size: 11px; letter-spacing: .03em; }
+.room-footer b { color: #2688ae; }
+
+.room-mode .demo-banner { position: absolute; top: 86px; right: 5vw; z-index: 6; margin: 0; background: rgb(255 255 255 / 52%); color: #49768b; }
+.room-main { position: absolute; inset: 90px 5vw 55px; z-index: 5; max-width: none; margin: 0; padding: 0; overflow: auto; pointer-events: none; scrollbar-width: thin; }
+.room-main-hidden { visibility: hidden; pointer-events: none; }
+.room-main > * { pointer-events: auto; }
+.room-focus-bar { position: sticky; top: 0; z-index: 4; display: flex; align-items: center; justify-content: space-between; min-height: 54px; margin-bottom: 12px; padding: 0 16px; border: 1px solid rgb(71 150 181 / 22%); border-radius: 16px; background: rgb(247 253 255 / 84%); box-shadow: 0 14px 32px rgb(51 124 153 / 14%), inset 0 1px 0 white; backdrop-filter: blur(18px); }
+.focus-breadcrumb { display: flex; align-items: center; gap: 9px; color: #5f8da3; font-size: 12px; font-weight: 650; }
+.focus-live { display: inline-block; width: 6px; height: 6px; }
+.focus-actions { display: flex; align-items: center; gap: 8px; }
+.focus-action, .focus-close { min-height: 31px; padding: 0 11px; border-radius: 999px; font-size: 11px; }
+.focus-action { border: 1px solid rgb(53 139 173 / 18%); background: rgb(220 242 251 / 72%); color: #39738b; }
+.focus-close { border: 0; background: #1e83ae; color: white; box-shadow: 0 5px 14px rgb(30 131 174 / 22%); }
+.focus-close span { margin-left: 7px; opacity: .68; font-size: 9px; }
+.room-main .card, .room-main .kpi, .room-main .stat { background: linear-gradient(145deg, rgb(255 255 255 / 94%), rgb(225 246 255 / 84%)); color: #173f58; border-color: rgb(62 150 182 / 20%); }
+.room-main .page-head h2, .room-main section > h2, .room-main .card h2 { color: #184866; }
+
+@media (max-width: 900px) {
+  .room-copy { top: 14%; }
+  .room-copy h1 { font-size: 3rem; }
+  .station-triage { left: 50%; top: 24%; }
+  .station-patients { right: 4%; top: 43%; }
+  .station-care { left: 43%; bottom: 19%; }
+  .station-operations { right: 4%; bottom: 10%; }
+  .station-docs { left: 5%; bottom: 10%; }
+  .station-audit { left: 5%; top: 44%; }
+  .room-console { left: 39%; top: 49%; }
+}
+
+@media (max-width: 680px) {
+  .room-session > span:not(.live-dot), .room-mode-button { display: none; }
+  .room-copy { left: 24px; top: 13%; }
+  .room-copy h1 { font-size: 2.5rem; }
+  .room-station { width: 158px; min-height: 124px; padding: 13px; border-radius: 17px; }
+  .station-triage { left: 44%; top: 27%; width: 175px; }
+  .station-patients { right: 4%; top: 46%; }
+  .station-care { left: 42%; bottom: 23%; }
+  .station-operations { right: 4%; bottom: 9%; }
+  .station-docs { left: 4%; bottom: 9%; }
+  .station-audit { left: 4%; top: 46%; }
+  .room-console { left: 33%; top: 58%; width: 108px; height: 108px; }
+  .room-console .console-action { top: 116px; }
+  .room-footer { left: 24px; right: 24px; }
+  .room-footer span:nth-child(2) { display: none; }
+  .room-main { inset: 74px 14px 45px; }
+  .room-focus-bar { align-items: flex-start; flex-direction: column; gap: 8px; padding: 10px 12px; }
 }
