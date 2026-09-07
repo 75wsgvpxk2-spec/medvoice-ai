@@ -76,8 +76,8 @@ same either way, and the screen says so.
 > **Dictation — read aloud:**
 >
 > Delores attends for her three month diabetes and kidney review. She feels
-> well. No swelling, no change in urine output, no shortness of breath. She is
-> taking the metformin and the ramipril every day without side effects.
+> well, with no swelling, no change in urine output and no shortness of breath.
+> She is taking the metformin and the ramipril every day without side effects.
 >
 > Blood pressure today is 142 over 88. Bloods from Tuesday show eGFR 49, down
 > from 53 three months ago. Urine ACR 52. HbA1c 8.1 percent.
@@ -251,6 +251,28 @@ Open the **Audit trail** for one last line:
 **Needs a live model:** the quality of the SOAP prose in Beat 4 and the wording
 of the ambiguity note in Beat 6. The thresholds, the flags, the extraction and
 the refusal-to-guess are all deterministic and demo identically without a key.
+
+### If the provider rate-limits you mid-demo
+
+> The model could not be reached — the request was rate limited. Nothing has
+> been lost; the note is saved.
+
+That is a 429 from the provider, and the message is literally true: the note was
+written as a draft before either agent ran, so the dictation is safe. The system
+is refusing to answer with encoded rules and call it agent output, which is the
+behaviour you want in front of an audience — say so, and it becomes a beat
+rather than a stumble.
+
+**The reliable way to demo is with no API key at all.** Clear it in Settings and
+the deterministic engine answers every time, instantly and free. On the Beat 2
+dictation it produces a correct four-section split and extracts all four values
+with their units. Only the prose *phrasing* differs from the live model; every
+clinical claim the demo makes is unchanged.
+
+The wording of the Beat 2 dictation above is deliberate: keeping the negatives
+in the same sentence as "she feels well" is what keeps them in Subjective rather
+than Plan on the deterministic engine. Both engines file it correctly as
+written.
 
 ---
 
