@@ -1,5 +1,36 @@
 # MedVoice AI — Clinical Intelligence Platform
 
+## New here? Ask ChatGPT to guide you through the install
+
+If you are not used to terminals or GitHub, [open this ready-made installation
+prompt in ChatGPT](https://chatgpt.com/?q=I%20am%20a%20beginner%20and%20want%20to%20install%20MedVoice%20AI%20from%20this%20GitHub%20repository%3A%20https%3A%2F%2Fgithub.com%2F75wsgvpxk2-spec%2Fmedvoice-ai.%20Please%20guide%20me%20step%20by%20step%20for%20my%20operating%20system.%20Start%20by%20checking%20that%20I%20have%20Node.js%2024%20or%20newer%2C%20then%20explain%20how%20to%20download%2Fclone%20the%20repository%2C%20open%20a%20terminal%20in%20its%20folder%2C%20run%20npm%20install%2C%20create%20.env%20from%20.env.example%2C%20run%20npm%20run%20setup%20for%20an%20empty%20clinic%20%28or%20explain%20npm%20run%20seed%3Ademo%20for%20fictional%20demo%20data%29%2C%20and%20start%20it%20with%20npm%20run%20dev.%20Tell%20me%20exactly%20what%20I%20should%20expect%20after%20each%20step.%20Never%20ask%20me%20to%20paste%20API%20keys%2C%20passwords%2C%20or%20other%20secrets%20into%20chat%3B%20use%20placeholders%20and%20explain%20where%20to%20enter%20them%20locally.%20If%20anything%20fails%2C%20ask%20me%20to%20paste%20the%20exact%20error%20and%20help%20me%20fix%20it.%20Remind%20me%20that%20this%20is%20not%20a%20certified%20medical%20device%20and%20demo%20data%20must%20not%20be%20confused%20with%20real%20patient%20records.)
+and paste the following if the link does not work:
+
+```text
+I am a beginner and want to install MedVoice AI from this GitHub repository:
+https://github.com/75wsgvpxk2-spec/medvoice-ai
+
+Please guide me step by step for my operating system. Start by checking that I
+have Node.js 24 or newer, then explain how to download or clone the repository,
+open a terminal in its folder, run npm install, create .env from .env.example,
+run npm run setup for an empty clinic (or explain npm run seed:demo for
+fictional demo data), and start it with npm run dev. Tell me exactly what I
+should expect after each step.
+
+Never ask me to paste API keys, passwords, or other secrets into chat. Use
+placeholders and explain where to enter secrets locally. If anything fails, ask
+me to paste the exact error and help me fix it. Remind me that this is not a
+certified medical device and demo data must not be confused with real patient
+records.
+```
+
+The short version is: install [Node.js 24 or newer](https://nodejs.org/), clone
+this repository, run `npm install`, copy `.env.example` to `.env`, run
+`npm run setup`, and then run `npm run dev`. Open
+[`http://localhost:5173`](http://localhost:5173) in your browser. Configure an
+AI provider in **Settings** before using the agents; keep API keys local and
+never paste them into ChatGPT.
+
 Open-source clinical decision support for small primary-care clinics. Four named
 agents read the whole caseload, not one visit at a time: they assemble context,
 structure a dictated note, assess risk, and check documentation — and every
