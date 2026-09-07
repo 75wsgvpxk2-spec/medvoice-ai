@@ -187,11 +187,15 @@ encounter:
 
 ## Beat 6 — The refusal (60 seconds) — **the beat that wins the room**
 
-Start a second encounter on any patient and dictate this instead:
+Start a second encounter on **Winston Grandison, 61** — hypertension,
+lisinopril 20 mg, and deliberately the most boring patient in the seeded
+population. He raises no flags of his own, so the only thing marked on the
+review screen is the one you came to show.
 
 > **Dictation — read aloud:**
 >
-> Routine review, she feels well. Weight 78 today. Blood pressure 128 over 76.
+> Routine blood pressure review, he feels well. Weight 78 today. Blood pressure
+> 128 over 76.
 
 Submit it, and go to the review screen.
 
