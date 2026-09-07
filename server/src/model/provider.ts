@@ -21,7 +21,7 @@ import type { AgentName } from '../../../shared/types.ts';
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface AgentCallOptions<T> {
-  agent: AgentName | 'phase0_test';
+  agent: AgentName | 'phase0_test' | 'clinical_assistant';
   /** Stable across calls so it sits at the front of the cached prefix. */
   system: string;
   /** The volatile part of the prompt. Always after the cache breakpoint. */

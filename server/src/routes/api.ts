@@ -58,6 +58,7 @@ import { toFhirBundle, toMarkdown } from '../clinical/report.ts';
 import { assessMonitoring } from '../clinical/monitoring.ts';
 import { subscribe } from '../orchestration/events.ts';
 import { summariseSpend } from '../model/spend.ts';
+import * as assistant from '../agents/assistant.ts';
 import { db, id } from '../db/index.ts';
 import type {
   AutomationId,
@@ -107,8 +108,22 @@ const generalLimiter = rateLimit({
   message: { error: 'Too many requests. Slow down and try again shortly.' },
 });
 
+/*
+ * The assistant is the one route a clinician can hold down: it is a text box
+ * with a Send button in front of a paid model. The general limit of six
+ * hundred a minute is the wrong shape for it entirely.
+ */
+const assistantLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'That is a lot of questions at once. Wait a moment and ask again.' },
+});
+
 api.use(generalLimiter);
 api.use(['/auth/login', '/auth/signup', '/auth/password'], authLimiter);
+api.use('/assistant', assistantLimiter);
 // Mounted before every route, so no change can be added later that escapes it.
 api.use(auditTrail);
 
@@ -1645,6 +1660,69 @@ api.delete('/pronunciations/:id', requireClinician, (req: AuthedRequest, res) =>
     summary: `Removed the voice training entry for “${record.term}”.`,
   });
   res.json({ ok: true });
+});
+
+/* ------------------------------------------------- clinical assistant --- */
+
+/**
+ * Ask about a patient, about the clinic's reference, or for next steps.
+ *
+ * The assistant reads the record back and explains it. It writes nothing: no
+ * order, no alert resolution, no status change, no note. That is deliberate
+ * and it is enforced here by there being no write path at all, not merely by
+ * asking the model nicely — a clinical action has to be taken by a clinician
+ * on a screen that says what it will do (§25).
+ *
+ * Rate limited alongside the other model-backed routes, because this is the
+ * one endpoint in the product a clinician can hold down.
+ */
+api.post('/assistant', requireClinician, async (req: AuthedRequest, res) => {
+  const body = req.body as { mode?: string; patientId?: string; question?: string };
+
+  const question = (body.question ?? '').trim();
+  if (!question) {
+    res.status(400).json({ error: 'Type a question first.' });
+    return;
+  }
+  if (question.length > 2000) {
+    res.status(400).json({ error: 'That question is too long. Shorten it to 2000 characters or fewer.' });
+    return;
+  }
+
+  const mode = body.mode;
+  if (mode !== 'patient' && mode !== 'research' && mode !== 'planning') {
+    res.status(400).json({ error: 'Choose patient, research or planning.' });
+    return;
+  }
+
+  let patientId: string | null = null;
+  if (body.patientId) {
+    // Same access boundary as every other patient route: the installation.
+    const patient = patients.byId(body.patientId);
+    if (!patient) {
+      res.status(404).json({ error: 'That patient is not in this clinic.' });
+      return;
+    }
+    patientId = patient.id;
+  }
+
+  if ((mode === 'patient' || mode === 'planning') && !patientId) {
+    res.status(400).json({
+      error: 'Choose a patient first — this mode answers from one patient\'s record.',
+    });
+    return;
+  }
+
+  try {
+    res.json(await assistant.ask({ mode, patientId, question }));
+  } catch (e) {
+    /*
+     * A model that is unreachable or unconfigured is reported, not hidden
+     * behind a cheerful non-answer. The assistant's own local engine covers
+     * the unconfigured case; anything that reaches here is a real failure.
+     */
+    res.status(502).json({ error: (e as Error).message });
+  }
 });
 
 /* --------------------------------------------------- clinical thresholds -- */
