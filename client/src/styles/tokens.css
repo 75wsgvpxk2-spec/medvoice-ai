@@ -19,24 +19,24 @@
   --brand-blue: #1e7bc8;
   --brand-light: #4fb3e8;
   --brand-glow: #7cc9f0;
-  --brand-wash: #eff7fd;
-  --brand-line: #cfe6f7;
+  --brand-wash: rgb(79 179 232 / 12%);
+  --brand-line: rgb(124 201 240 / 36%);
   --brand-gradient: linear-gradient(135deg, #0f3355 0%, #1565c0 55%, #2f92d6 100%);
   --brand-gradient-soft: linear-gradient(135deg, #eff7fd 0%, #e3f1fb 100%);
 
   /* Ground and surfaces. A faintly blue ground makes white cards lift. */
-  --ground: #f2f6fb;
-  --surface: #ffffff;
-  --surface-sunken: #eef3f9;
-  --surface-raised: #ffffff;
+  --ground: #07131f;
+  --surface: rgb(18 35 51 / 78%);
+  --surface-sunken: rgb(6 19 31 / 72%);
+  --surface-raised: rgb(24 47 67 / 86%);
 
-  --ink: #10202f;
-  --ink-secondary: #38495c;
-  --ink-muted: #667789;
+  --ink: #edf7ff;
+  --ink-secondary: #c8d8e8;
+  --ink-muted: #8da3b6;
   --ink-onbrand: #ffffff;
 
-  --line: #e4ebf3;
-  --line-strong: #c8d5e3;
+  --line: rgb(167 211 238 / 14%);
+  --line-strong: rgb(167 211 238 / 28%);
 
   /* Urgency. The only clinical colour, each with a tint for backgrounds. */
   --critical: #c0272d;

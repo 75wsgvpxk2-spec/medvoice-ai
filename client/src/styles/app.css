@@ -2667,3 +2667,169 @@ tbody tr:hover { background: var(--brand-wash); }
   .hse-signature { break-inside: avoid; page-break-inside: avoid; }
   @page { margin: 14mm; }
 }
+
+/* Command room skin -------------------------------------------------------
+   A calm, dark operational surface gives the queue the feel of a real room:
+   glass panels float over a quiet instrument-grid, with a few bright edges to
+   show where the interface is active. Clinical status colours remain reserved
+   for urgency and are not repurposed as decoration. */
+
+body {
+  background: var(--ground);
+}
+
+.workspace {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 82% 8%, rgb(31 121 173 / 20%), transparent 29rem),
+    radial-gradient(circle at 18% 92%, rgb(15 75 112 / 20%), transparent 34rem),
+    linear-gradient(135deg, #07131f 0%, #0b1c2b 52%, #081522 100%);
+}
+
+.workspace::before,
+.workspace::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* Fine instrument grid plus a subtle scanline texture. */
+.workspace::before {
+  opacity: 0.34;
+  background-image:
+    linear-gradient(rgb(143 203 234 / 6%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(143 203 234 / 6%) 1px, transparent 1px),
+    repeating-linear-gradient(0deg, transparent 0 4px, rgb(255 255 255 / 1.5%) 5px);
+  background-size: 44px 44px, 44px 44px, 100% 6px;
+  mask-image: linear-gradient(to bottom, black, transparent 90%);
+}
+
+.workspace::after {
+  inset: 18px;
+  border: 1px solid rgb(132 204 237 / 9%);
+  border-radius: 28px;
+  box-shadow: inset 0 0 80px rgb(0 0 0 / 13%);
+}
+
+.main {
+  position: relative;
+  z-index: 1;
+  max-width: 1440px;
+  padding: clamp(1.25rem, 3vw, 2.75rem) clamp(1rem, 4vw, 3.5rem);
+}
+
+.sidebar {
+  background:
+    linear-gradient(180deg, rgb(9 35 57 / 96%), rgb(6 21 35 / 99%)),
+    var(--brand-gradient);
+  border-right: 1px solid rgb(124 201 240 / 18%);
+  box-shadow: 18px 0 44px rgb(0 0 0 / 14%);
+}
+
+.sidebar-brand {
+  border-bottom: 1px solid rgb(159 215 242 / 16%);
+  padding-bottom: var(--gap-4);
+}
+
+.page-head h2 {
+  color: #f4fbff;
+  font-size: clamp(1.75rem, 3vw, 2.45rem);
+  letter-spacing: -0.045em;
+}
+
+.page-head .sub {
+  color: #91aabd;
+}
+
+.card,
+.kpi,
+.stat {
+  background:
+    linear-gradient(145deg, rgb(28 54 74 / 72%), rgb(11 28 43 / 78%)),
+    var(--surface);
+  border-color: rgb(163 216 239 / 16%);
+  box-shadow:
+    0 18px 45px rgb(0 0 0 / 18%),
+    inset 0 1px 0 rgb(255 255 255 / 8%),
+    inset 0 0 0 1px rgb(81 151 188 / 5%);
+  backdrop-filter: blur(18px) saturate(125%);
+}
+
+.card::before,
+.kpi::before {
+  content: '';
+  display: block;
+  height: 1px;
+  margin: calc(-1 * var(--gap-4)) calc(-1 * var(--gap-5)) var(--gap-4);
+  background: linear-gradient(90deg, transparent, rgb(171 225 246 / 42%), transparent);
+  opacity: 0.55;
+}
+
+.card h2,
+section > h2 {
+  color: #dceefa;
+}
+
+.kpi-label,
+.stat .k,
+.kpi-note {
+  color: #8ca9bb;
+}
+
+.kpi-value,
+.stat .n,
+.facts dd {
+  color: #f2faff;
+  text-shadow: 0 0 18px rgb(124 201 240 / 18%);
+}
+
+.queue-row,
+.mini-row {
+  background: linear-gradient(135deg, rgb(24 52 72 / 76%), rgb(10 26 40 / 84%));
+  border-color: rgb(159 215 242 / 18%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%), 0 10px 22px rgb(0 0 0 / 14%);
+}
+
+.queue-row:hover:not(:disabled),
+.mini-row:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgb(31 72 97 / 86%), rgb(12 35 52 / 92%));
+  border-color: rgb(124 201 240 / 50%);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 20%), 0 0 0 1px rgb(124 201 240 / 13%);
+  transform: translateY(-1px);
+}
+
+input,
+textarea,
+select {
+  background: rgb(5 18 30 / 72%);
+  color: #edf7ff;
+  border-color: rgb(159 215 242 / 22%);
+}
+
+.demo-banner,
+.notice {
+  background: rgb(17 56 77 / 74%);
+  border-color: rgb(124 201 240 / 26%);
+  color: #d9effb;
+  box-shadow: 0 12px 28px rgb(0 0 0 / 15%), inset 0 1px 0 rgb(255 255 255 / 7%);
+  backdrop-filter: blur(14px);
+}
+
+button:not(.primary):not(.link):not(.nav-item):not(.sidebar-toggle) {
+  background: rgb(19 42 59 / 72%);
+  border-color: rgb(159 215 242 / 22%);
+  color: #dceefa;
+}
+
+button.primary {
+  background: linear-gradient(135deg, #1c83b7, #2167b8 58%, #3653bd);
+  box-shadow: 0 8px 22px rgb(26 128 188 / 28%), inset 0 1px 0 rgb(255 255 255 / 22%);
+}
+
+@media (max-width: 720px) {
+  .workspace::after { inset: 8px; border-radius: 18px; }
+}
