@@ -1,5 +1,20 @@
 # MedVoice AI — Clinical Intelligence Platform
 
+## Install MedVoice AI yourself
+
+Want to run MedVoice AI for your own clinic? Copy this prompt into your coding
+assistant or share it with your developer:
+
+> Clone [the MedVoice AI repository](https://github.com/75wsgvpxk2-spec/medvoice-ai),
+> read the [deployment guide](docs/DEPLOYMENT.md), and help me install it on my
+> machine. Check that Node.js 24+ is installed, configure `.env`, run the setup
+> command to create the clinic administrator, and start the platform. Explain
+> every command before running it and do not use real patient data until the
+> security, backup, HTTPS, and compliance requirements are reviewed.
+
+For the short local setup, see [Getting your own instance](#getting-your-own-instance).
+For a production or Docker deployment, follow the [Deployment Guide](docs/DEPLOYMENT.md).
+
 ## New here? Ask ChatGPT to guide you through the install
 
 If you are not used to terminals or GitHub, [open this ready-made installation
