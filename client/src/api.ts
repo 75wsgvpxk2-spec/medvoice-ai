@@ -27,6 +27,8 @@ import type {
   ExpenseSummary,
   HseReport,
   HseFindings,
+  TimeSavedEstimates,
+  TimeSavedView,
 } from '../../shared/types';
 
 export class ApiError extends Error {
@@ -242,6 +244,29 @@ export interface Transparency {
   models: Array<{ model: string; provider: string; calls: number; costUsd: number }>;
   degraded: number;
   degradedReasons: Array<{ reason: string; calls: number; lastAt: string }>;
+}
+
+/**
+ * The clinical assistant.
+ *
+ * Three questions a clinician asks between patients: what does this record
+ * say, what does our reference say, and what are the sensible next steps.
+ * `basis` is what the answer was drawn from — it is how the clinician checks
+ * the answer against the record, so it is never optional and never hidden.
+ */
+export type AssistantMode = 'patient' | 'research' | 'planning';
+
+export interface AssistantReply {
+  answer: string;
+  basis: string[];
+  /** The record did not settle the question. Shown, never smoothed over. */
+  uncertain: boolean;
+  mode: AssistantMode;
+  patientId: string | null;
+  patientName: string | null;
+  /** No model was configured, so the local engine answered. */
+  deterministic: boolean;
+  degradedReason?: string;
 }
 
 export interface SettingsView {
@@ -563,8 +588,18 @@ export const api = {
       {},
     ),
 
+  assistant: (input: { mode: AssistantMode; patientId: string | null; question: string }) =>
+    post<AssistantReply>('/assistant', input),
+
   settings: () => request<SettingsView>('/settings'),
   thresholds: () => request<{ thresholds: ThresholdRow[] }>('/thresholds'),
+  timeSaved: (from: Date, to: Date) =>
+    request<TimeSavedView>(
+      `/time-saved?from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
+    ),
+  timeSavedEstimates: () => request<{ estimates: TimeSavedEstimates }>('/time-saved/estimates'),
+  saveTimeSavedEstimates: (input: TimeSavedEstimates) =>
+    put<{ estimates: TimeSavedEstimates }>('/time-saved/estimates', input),
   saveThreshold: (name: string, input: { value: number; reason: string; source: string }) =>
     put<{ thresholds: ThresholdRow[] }>(`/thresholds/${name}`, input),
   restoreThreshold: (name: string) => del<{ thresholds: ThresholdRow[] }>(`/thresholds/${name}`),

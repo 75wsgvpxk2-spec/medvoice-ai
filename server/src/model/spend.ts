@@ -4,7 +4,7 @@ import { costUsd, type TokenUsage } from './pricing.ts';
 import type { AgentName } from '../../../shared/types.ts';
 
 export interface SpendRecord {
-  agent: AgentName | 'phase0_test';
+  agent: AgentName | 'phase0_test' | 'clinical_assistant';
   provider: 'anthropic' | 'compatible' | 'deterministic';
   model: string;
   usage: TokenUsage;

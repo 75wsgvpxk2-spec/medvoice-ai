@@ -206,6 +206,16 @@ const DESCRIBERS: Record<string, Describer> = {
       detail: { assessed: result.assessed, failures: result.failures?.length ?? 0 },
     };
   },
+
+  'PUT /time-saved/estimates': ({ body }) => {
+    const estimates = (body as { estimates?: { dailyGoalMinutes?: number } }).estimates;
+    return {
+      summary: `Changed the time-saved estimates (daily goal ${estimates?.dailyGoalMinutes ?? '?'} minutes).`,
+      entityType: 'setting',
+      patientId: null,
+      detail: { estimates },
+    };
+  },
 };
 
 /** Routes that write their own, richer audit rows. Skipped to avoid duplicates. */
@@ -303,6 +313,7 @@ function actionFor(key: string): string {
     'POST /flags/:id/dismiss': 'flag.dismissed',
     'POST /orders/:id/complete': 'order.completed',
     'POST /population-run': 'population.assessed',
+    'PUT /time-saved/estimates': 'time_saved.estimates_updated',
   };
   return map[key] ?? 'other.changed';
 }

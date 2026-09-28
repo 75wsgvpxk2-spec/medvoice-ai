@@ -1112,3 +1112,67 @@ export const HSE_DEFAULTS: HseFindings = {
     audiogram: '',
   },
 };
+
+/* ------------------------------------------------------------ time saved -- */
+
+/**
+ * The kinds of work the platform does on a clinic's behalf, each with an
+ * estimate of the minutes it saves against doing the same job by hand.
+ *
+ * Only work the platform itself records is counted, and only once it is
+ * finished and attributed — an approved note, a signed report — so the total
+ * is something a clinic can trust rather than a number it is asked to believe.
+ * The minutes are estimates; an admin adjusts them to the clinic's own pace.
+ */
+export type TimeSavedKind =
+  | 'encounter_note'
+  | 'hse_report'
+  | 'care_gap'
+  | 'summary_report'
+  | 'invoice'
+  | 'population_review';
+
+export const TIME_SAVED_TASKS: ReadonlyArray<{
+  kind: TimeSavedKind;
+  label: string;
+  /** For the room's scoreboard, where there is room for a word, not a phrase. */
+  short: string;
+  /** What counts as one, in the words the Settings screen uses. */
+  counts: string;
+  defaultMinutes: number;
+}> = [
+  { kind: 'encounter_note', label: 'Encounter note', short: 'Note', counts: 'each note approved from dictation', defaultMinutes: 7 },
+  { kind: 'hse_report', label: 'HSE medical report', short: 'HSE', counts: 'each report signed', defaultMinutes: 20 },
+  { kind: 'care_gap', label: 'Care gap closed', short: 'Gap', counts: 'each documentation gap resolved', defaultMinutes: 3 },
+  { kind: 'summary_report', label: 'Patient summary', short: 'Summary', counts: 'each record summary generated', defaultMinutes: 10 },
+  { kind: 'invoice', label: 'Invoice', short: 'Invoice', counts: 'each invoice raised', defaultMinutes: 5 },
+  { kind: 'population_review', label: 'Population review', short: 'Review', counts: 'each full assessment run', defaultMinutes: 30 },
+];
+
+export interface TimeSavedEstimates {
+  minutes: Record<TimeSavedKind, number>;
+  /** The clinic's daily target, which the progress bar fills toward. */
+  dailyGoalMinutes: number;
+}
+
+export const DEFAULT_TIME_SAVED: TimeSavedEstimates = {
+  minutes: Object.fromEntries(TIME_SAVED_TASKS.map((t) => [t.kind, t.defaultMinutes])) as Record<
+    TimeSavedKind,
+    number
+  >,
+  dailyGoalMinutes: 60,
+};
+
+/** One finished piece of work. No patient details: this is a scoreboard. */
+export interface TimeSavedItem {
+  id: string;
+  kind: TimeSavedKind;
+  at: string;
+  clinicianId: string;
+  clinicianName: string;
+}
+
+export interface TimeSavedView {
+  items: TimeSavedItem[];
+  estimates: TimeSavedEstimates;
+}

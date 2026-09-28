@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { Clinician, QueueView, Patient } from '../../shared/types';
 import { api, ApiError, onSessionEnded, type ApprovalOutcome } from './api';
 import { useClinicStream } from './lib/stream';
@@ -18,22 +18,21 @@ import { Settings } from './screens/Settings';
 import { Audit } from './screens/Audit';
 import { OperationsHub, Products, Invoices, Expenses, Reports, type OpsScreen } from './screens/Operations';
 import { HseWizard, HseReportList } from './screens/HseReport';
+import { TimeSaved } from './screens/TimeSaved';
 import type { Clinic } from '../../shared/types';
-
-type Route =
-  | { name: 'dashboard' }
-  | { name: 'queue' }
-  | { name: 'patient'; patientId: string }
-  | { name: 'encounter'; patientId: string }
-  | { name: 'population' }
-  | { name: 'new-patient' }
-  | { name: 'flags' }
-  | { name: 'audit' }
-  | { name: 'settings' }
-  | { name: 'clinic' }
-  | { name: 'activity' }
-  | { name: 'operations'; screen: OpsScreen }
-  | { name: 'hse'; patientId?: string; reportId?: string };
+import type { Route } from './routes';
+import { Assistant, useAssistant } from './components/Assistant';
+/*
+ * The room, and everything it is drawn with, is a separate download.
+ *
+ * three.js, React Three Fiber and drei together are about a megabyte, and a
+ * clinic that never opens the room should never pay for them — §26 asks that
+ * no 3D asset block the basic interface. Importing CommandRoom directly put
+ * the whole stack in the first chunk, because a static import of the module
+ * that holds the <Canvas> is a static import of three.
+ */
+const CommandRoom = lazy(() => import('./command-room/CommandRoom'));
+import { detectWebGL } from './command-room/roomState';
 
 export function App() {
   const [clinician, setClinician] = useState<Clinician | null>(null);
@@ -46,6 +45,25 @@ export function App() {
   /** So the first-run prompt fires once, not on every settings fetch. */
   const promptedForKey = useRef(false);
   const [route, setRoute] = useState<Route>({ name: 'queue' });
+
+  /*
+   * Room or sidebar.
+   *
+   * The command room is the default where the browser can draw it, and the
+   * conventional shell is one button away at all times. §26 makes that
+   * fallback a requirement rather than a courtesy: a clinic on a machine with
+   * no WebGL still gets the whole product, and a clinician who finds the room
+   * slow or distracting is never trapped in it. The choice sticks.
+   */
+  const [shellMode, setShellMode] = useState<'room' | 'classic'>(() => {
+    const stored = localStorage.getItem('mv-shell');
+    if (stored === 'classic' || stored === 'room') return stored === 'room' && detectWebGL() ? 'room' : 'classic';
+    return detectWebGL() ? 'room' : 'classic';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('mv-shell', shellMode);
+  }, [shellMode]);
 
   const [queue, setQueue] = useState<QueueView | null>(null);
   const [queueLoading, setQueueLoading] = useState(false);
@@ -62,6 +80,14 @@ export function App() {
   // data gets mistaken for real data, so the safer default is to label it.
   const [demoMode, setDemoMode] = useState(true);
   const [goingLive, setGoingLive] = useState(false);
+  /*
+   * The assistant follows whoever is on screen.
+   *
+   * Asking "what changed since the last visit" while looking at a patient
+   * should not also require naming them — and asking it while looking at the
+   * queue should say which record it would read, rather than guessing at one.
+   */
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('mv-rail', railed ? '1' : '0');
@@ -89,6 +115,8 @@ export function App() {
 
   // Section 6: the queue updates when agents complete, with no manual refresh.
   const { lanes, connected } = useClinicStream(loadQueue);
+  // Finished agent runs follow every approval, so the scoreboard refreshes on them.
+  const completedRuns = lanes.filter((lane) => lane.state !== 'running').length;
 
   useEffect(() => {
     api
@@ -151,6 +179,20 @@ export function App() {
       })
       .catch(() => setShowStrip(true));
   }, [clinician, loadQueue]);
+
+  const assistantPatientId =
+    route.name === 'patient' || route.name === 'encounter' ? route.patientId : null;
+  const assistantPatient = assistantPatientId
+    ? {
+        id: assistantPatientId,
+        name:
+          encounterPatient?.id === assistantPatientId
+            ? encounterPatient.name
+            : (queue?.rows.find((r) => r.patient.id === assistantPatientId)?.patient.name ??
+              'this patient'),
+      }
+    : null;
+  const assistant = useAssistant(assistantPatientId);
 
   if (checkingSession) return <div style={{ padding: 'var(--gap-6)' }}>Checking your session…</div>;
   if (!clinician) {
@@ -226,166 +268,16 @@ export function App() {
     );
   };
 
-  return (
-    <div className={`shell ${railed ? 'rail' : ''}`}>
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          {/* The clinic's own identity wherever it has given one. A practice
-              that has set its name should not still be looking at ours. */}
-          <span className="wordmark">
-            {clinic?.logo ? (
-              <img className="clinic-logo" src={clinic.logo} alt={clinic.name || 'Clinic logo'} />
-            ) : clinic?.name ? (
-              <span className="clinic-wordmark" title={clinic.name}>
-                {clinic.name}
-              </span>
-            ) : (
-              <Logo height={26} onBrand />
-            )}
-          </span>
-          {!railed && (
-            <button
-              className="sidebar-toggle"
-              style={{ marginLeft: 'auto' }}
-              onClick={() => setRailed(true)}
-              aria-label="Collapse navigation"
-              title="Collapse navigation"
-            >
-              <IconCollapse />
-            </button>
-          )}
-          {railed && (
-            <button
-              className="sidebar-toggle"
-              onClick={() => setRailed(false)}
-              aria-label="Expand navigation"
-              title="Expand navigation"
-            >
-              <IconExpand />
-            </button>
-          )}
-        </div>
-
-        <nav>
-          <NavItem
-            label="Dashboard"
-            icon={<IconDashboard />}
-            active={route.name === 'dashboard'}
-            onClick={() => setRoute({ name: 'dashboard' })}
-          />
-          <NavItem
-            label="Priority queue"
-            icon={<IconQueue />}
-            active={route.name === 'queue'}
-            onClick={() => setRoute({ name: 'queue' })}
-          />
-          <NavItem
-            label="All patients"
-            icon={<IconPeople />}
-            active={route.name === 'population' || route.name === 'patient'}
-            onClick={() => setRoute({ name: 'population' })}
-          />
-          {/* Adding a patient lives on the All patients screen, where you go
-              when you have discovered the patient is not already there. */}
-          <NavItem
-            label="Flags"
-            icon={<IconFlag />}
-            active={route.name === 'flags'}
-            onClick={() => setRoute({ name: 'flags' })}
-          />
-          <NavItem
-            label="Agent activity"
-            icon={<IconActivity />}
-            active={route.name === 'activity'}
-            onClick={() => setRoute({ name: 'activity' })}
-          />
-          <NavItem
-            label="Audit trail"
-            icon={<IconAudit />}
-            active={route.name === 'audit'}
-            onClick={() => setRoute({ name: 'audit' })}
-          />
-          <NavItem
-            label="Operations"
-            icon={<IconOperations />}
-            active={route.name === 'operations' || route.name === 'hse'}
-            onClick={() => setRoute({ name: 'operations', screen: 'hub' })}
-          />
-        </nav>
-
-        {/* Only the account itself sits at the foot now. */}
-        <div className="sidebar-footer">
-          <span className="who">
-            {clinic?.name && <strong className="who-clinic">{clinic.name}</strong>}
-            {/* The clinic's named doctor when it has one, otherwise whoever is
-                signed in. Both are shown when they differ, because on a shared
-                machine "who is this account" is a question worth answering. */}
-            {clinic?.primaryDoctor && (
-              <span className="who-person">{clinic.primaryDoctor}</span>
-            )}
-            {(!clinic?.primaryDoctor || clinic.primaryDoctor !== clinician.name) && (
-              <span className={clinic?.primaryDoctor ? 'who-cred' : 'who-person'}>
-                {clinic?.primaryDoctor ? `Signed in: ${clinician.name}` : clinician.name}
-              </span>
-            )}
-            {!clinic?.primaryDoctor && clinician.credentials && (
-              <span className="who-cred">{clinician.credentials}</span>
-            )}
-          </span>
-          <NavItem
-            label="Settings"
-            icon={<IconSettings />}
-            active={route.name === 'settings'}
-            onClick={() => setRoute({ name: 'settings' })}
-          />
-          <NavItem
-            label="Clinic profile"
-            icon={<IconClinic />}
-            active={route.name === 'clinic'}
-            onClick={() => setRoute({ name: 'clinic' })}
-          />
-          <button
-            className="nav-item"
-            onClick={async () => {
-              await api.logout();
-              window.location.reload();
-            }}
-            title="Sign out"
-          >
-            <span className="nav-icon" aria-hidden="true">
-              <IconSignOut />
-            </span>
-            <span className="nav-label">Sign out</span>
-          </button>
-        </div>
-      </aside>
-
-      <div className="workspace">
-      {demoMode && (
-        <div className="demo-banner" role="status">
-          <span>
-            <strong>Demo data.</strong> Every patient here is fictional. Explore freely — nothing in
-            this database is a real record.
-          </span>
-          <button className="quiet" onClick={() => setGoingLive(true)}>
-            Start real records
-          </button>
-        </div>
-      )}
-
-      {goingLive && (
-        <GoLiveDialog
-          onClose={() => setGoingLive(false)}
-          onDone={() => {
-            setGoingLive(false);
-            setDemoMode(false);
-            // Everything on screen was demo data a moment ago.
-            loadQueue();
-            setRoute({ name: 'population' });
-          }}
-        />
-      )}
-      <main className="main">
+  /*
+   * The screens themselves, extracted so both shells can render them.
+   *
+   * §24: mature screens are wrapped, not rewritten. The sidebar shell puts
+   * them in <main>; the command room puts the same elements inside its focus
+   * panel. There is one copy of this list, so a screen cannot exist in one
+   * shell and not the other.
+   */
+  const screens = (
+    <>
         {notice && (
           <div className="notice spread" role="status" style={{ marginBottom: 'var(--gap-4)' }}>
             <span>{notice}</span>
@@ -507,7 +399,268 @@ export function App() {
         )}
 
         {route.name === 'activity' && <AgentActivity clinician={clinician} />}
-      </main>
+
+        {route.name === 'time-saved' && (
+          <TimeSaved
+            isAdmin={clinician.role === 'admin'}
+            refreshKey={completedRuns}
+            onOpenSettings={() => setRoute({ name: 'settings' })}
+          />
+        )}
+    </>
+  );
+
+  /*
+   * Room mode. The room is a shell over the same state: the same queue, the
+   * same route, the same screens. It navigates by moving a camera instead of
+   * highlighting a sidebar item, and hands off to the existing interface the
+   * moment precision matters.
+   */
+  if (shellMode === 'room') {
+    return (
+      <>
+        {goingLive && (
+          <GoLiveDialog
+            onClose={() => setGoingLive(false)}
+            onDone={() => {
+              setGoingLive(false);
+              setDemoMode(false);
+              loadQueue();
+              setRoute({ name: 'population' });
+            }}
+          />
+        )}
+        <Suspense
+          fallback={
+            <div className="room-loading" role="status">
+              Opening the command room…
+            </div>
+          }
+        >
+        <CommandRoom
+          clinic={clinic}
+          clinician={clinician}
+          demoMode={demoMode}
+          onStartReal={() => setGoingLive(true)}
+          route={route}
+          onNavigate={setRoute}
+          onLeave={() => setShellMode('classic')}
+          queue={queue}
+          queueLoading={queueLoading}
+          queueError={queueError}
+          running={running}
+          onRunPopulation={runPopulation}
+          onStartEncounter={openEncounter}
+          lanes={lanes}
+          connected={connected}
+        >
+          {screens}
+        </CommandRoom>
+        </Suspense>
+      </>
+    );
+  }
+
+  return (
+    <div className={`shell ${railed ? 'rail' : ''}`}>
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          {/* The clinic's own identity wherever it has given one. A practice
+              that has set its name should not still be looking at ours. */}
+          <span className="wordmark">
+            {clinic?.logo ? (
+              <img className="clinic-logo" src={clinic.logo} alt={clinic.name || 'Clinic logo'} />
+            ) : clinic?.name ? (
+              <span className="clinic-wordmark" title={clinic.name}>
+                {clinic.name}
+              </span>
+            ) : (
+              <Logo height={26} onBrand />
+            )}
+          </span>
+          {!railed && (
+            <button
+              className="sidebar-toggle"
+              style={{ marginLeft: 'auto' }}
+              onClick={() => setRailed(true)}
+              aria-label="Collapse navigation"
+              title="Collapse navigation"
+            >
+              <IconCollapse />
+            </button>
+          )}
+          {railed && (
+            <button
+              className="sidebar-toggle"
+              onClick={() => setRailed(false)}
+              aria-label="Expand navigation"
+              title="Expand navigation"
+            >
+              <IconExpand />
+            </button>
+          )}
+        </div>
+
+        <nav>
+          {/* The way back into the room, for anyone who left it or whose
+              browser sent them here. */}
+          <NavItem
+            label="Command room"
+            icon={<IconRoom />}
+            active={false}
+            onClick={() => setShellMode('room')}
+          />
+          <NavItem
+            label="Dashboard"
+            icon={<IconDashboard />}
+            active={route.name === 'dashboard'}
+            onClick={() => setRoute({ name: 'dashboard' })}
+          />
+          <NavItem
+            label="Priority queue"
+            icon={<IconQueue />}
+            active={route.name === 'queue'}
+            onClick={() => setRoute({ name: 'queue' })}
+          />
+          <NavItem
+            label="All patients"
+            icon={<IconPeople />}
+            active={route.name === 'population' || route.name === 'patient'}
+            onClick={() => setRoute({ name: 'population' })}
+          />
+          {/* Adding a patient lives on the All patients screen, where you go
+              when you have discovered the patient is not already there. */}
+          <NavItem
+            label="Flags"
+            icon={<IconFlag />}
+            active={route.name === 'flags'}
+            onClick={() => setRoute({ name: 'flags' })}
+          />
+          <NavItem
+            label="Agent activity"
+            icon={<IconActivity />}
+            active={route.name === 'activity'}
+            onClick={() => setRoute({ name: 'activity' })}
+          />
+          <NavItem
+            label="Audit trail"
+            icon={<IconAudit />}
+            active={route.name === 'audit'}
+            onClick={() => setRoute({ name: 'audit' })}
+          />
+          <NavItem
+            label="Operations"
+            icon={<IconOperations />}
+            active={route.name === 'operations' || route.name === 'hse'}
+            onClick={() => setRoute({ name: 'operations', screen: 'hub' })}
+          />
+          <NavItem
+            label="Time saved"
+            icon={<IconTimeSaved />}
+            active={route.name === 'time-saved'}
+            onClick={() => setRoute({ name: 'time-saved' })}
+          />
+        </nav>
+
+        {/* Only the account itself sits at the foot now. */}
+        <div className="sidebar-footer">
+          <span className="who">
+            {clinic?.name && <strong className="who-clinic">{clinic.name}</strong>}
+            {/* The clinic's named doctor when it has one, otherwise whoever is
+                signed in. Both are shown when they differ, because on a shared
+                machine "who is this account" is a question worth answering. */}
+            {clinic?.primaryDoctor && (
+              <span className="who-person">{clinic.primaryDoctor}</span>
+            )}
+            {(!clinic?.primaryDoctor || clinic.primaryDoctor !== clinician.name) && (
+              <span className={clinic?.primaryDoctor ? 'who-cred' : 'who-person'}>
+                {clinic?.primaryDoctor ? `Signed in: ${clinician.name}` : clinician.name}
+              </span>
+            )}
+            {!clinic?.primaryDoctor && clinician.credentials && (
+              <span className="who-cred">{clinician.credentials}</span>
+            )}
+          </span>
+          <NavItem
+            label="Settings"
+            icon={<IconSettings />}
+            active={route.name === 'settings'}
+            onClick={() => setRoute({ name: 'settings' })}
+          />
+          <NavItem
+            label="Clinic profile"
+            icon={<IconClinic />}
+            active={route.name === 'clinic'}
+            onClick={() => setRoute({ name: 'clinic' })}
+          />
+          <button
+            className="nav-item"
+            onClick={async () => {
+              await api.logout();
+              window.location.reload();
+            }}
+            title="Sign out"
+          >
+            <span className="nav-icon" aria-hidden="true">
+              <IconSignOut />
+            </span>
+            <span className="nav-label">Sign out</span>
+          </button>
+        </div>
+      </aside>
+
+      <div className="workspace">
+      {demoMode && (
+        <div className="demo-banner" role="status">
+          <span>
+            <strong>Demo data.</strong> Every patient here is fictional. Explore freely — nothing in
+            this database is a real record.
+          </span>
+          <button className="quiet" onClick={() => setGoingLive(true)}>
+            Start real records
+          </button>
+        </div>
+      )}
+
+      {goingLive && (
+        <GoLiveDialog
+          onClose={() => setGoingLive(false)}
+          onDone={() => {
+            setGoingLive(false);
+            setDemoMode(false);
+            // Everything on screen was demo data a moment ago.
+            loadQueue();
+            setRoute({ name: 'population' });
+          }}
+        />
+      )}
+      <main className="main">{screens}</main>
+
+      {/*
+        The clinical assistant, docked.
+        Closed it is one button; open it is a panel that never covers the
+        screen it is answering about. It reads the record and explains it —
+        every clinical action stays on the screen that makes it.
+      */}
+      {assistantOpen ? (
+        <div className="assistant-dock">
+          <div className="assistant-dock-head">
+            <strong>Clinical assistant</strong>
+            <button
+              className="assistant-dock-close"
+              onClick={() => setAssistantOpen(false)}
+              aria-label="Close the assistant"
+            >
+              ×
+            </button>
+          </div>
+          <Assistant patient={assistantPatient} assistant={assistant} />
+        </div>
+      ) : (
+        <button className="assistant-launch" onClick={() => setAssistantOpen(true)}>
+          Ask MedVoice AI
+        </button>
+      )}
 
       {/* The signature element: persistent, and never blocking the screen. */}
       {showStrip && (
@@ -576,6 +729,14 @@ const IconDocument = () => (
   </svg>
 );
 
+/* A clock with a tick — time handed back. */
+const IconTimeSaved = () => (
+  <svg {...svg}>
+    <circle cx="12" cy="12" r="9" />
+    <polyline points="12 7 12 12 15 14" />
+  </svg>
+);
+
 const IconOperations = () => (
   <svg {...svg}>
     <path d="M3 7l9-4 9 4v10l-9 4-9-4z" />
@@ -639,6 +800,14 @@ const IconClinic = () => (
     <path d="M5 21V7l7-4 7 4v14" />
     <path d="M12 9v6" />
     <path d="M9 12h6" />
+  </svg>
+);
+
+/* A room seen from above: four walls and something in the middle of them. */
+const IconRoom = () => (
+  <svg {...svg}>
+    <rect x="3" y="3" width="18" height="18" rx="2.5" />
+    <circle cx="12" cy="12" r="3" />
   </svg>
 );
 

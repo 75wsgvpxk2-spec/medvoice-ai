@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Clinician, ClinicSettings, Pronunciation, UnitPreferences } from '../../../shared/types';
-import { PROVIDER_PRESETS } from '../../../shared/types';
+import type {
+  Clinician,
+  ClinicSettings,
+  Pronunciation,
+  TimeSavedEstimates,
+  TimeSavedKind,
+  UnitPreferences,
+} from '../../../shared/types';
+import { DEFAULT_TIME_SAVED, PROVIDER_PRESETS, TIME_SAVED_TASKS } from '../../../shared/types';
 import { api, ApiError, type SettingsView, type ThresholdRow } from '../api';
 import { ErrorState, EmptyState } from '../components';
 import { useDictation } from '../lib/speech';
@@ -90,8 +97,122 @@ export function Settings({ clinician }: { clinician: Clinician }) {
       <SignatureSection clinician={clinician} onError={setError} />
       <VoiceTraining onError={setError} />
       {isAdmin && <ThresholdSection onError={setError} />}
+      {isAdmin && <TimeSavedSection onError={setError} />}
       {isAdmin && <ClinicSection settings={s} onSave={save} saving={saving} />}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------- time saved -- */
+
+/**
+ * The estimates the Time saved scoreboard values finished work at.
+ *
+ * Every clinic works at its own pace, and a scoreboard that credits a note
+ * with more time than it ever took is one nobody believes. Saved together so
+ * the goal and the figures it is measured in never disagree.
+ */
+function TimeSavedSection({ onError }: { onError: (message: string) => void }) {
+  const [saved, setSaved] = useState<TimeSavedEstimates | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const fill = (e: TimeSavedEstimates) => {
+    setSaved(e);
+    setDraft({
+      ...Object.fromEntries(TIME_SAVED_TASKS.map((t) => [t.kind, String(e.minutes[t.kind])])),
+      goal: String(e.dailyGoalMinutes),
+    });
+  };
+
+  useEffect(() => {
+    api
+      .timeSavedEstimates()
+      .then((r) => fill(r.estimates))
+      .catch((e: ApiError) => onError(e.message));
+  }, [onError]);
+
+  if (!saved) return <section className="card">Loading time-saved estimates…</section>;
+
+  const parsed: TimeSavedEstimates = {
+    minutes: Object.fromEntries(
+      TIME_SAVED_TASKS.map((t) => [t.kind, Number(draft[t.kind])]),
+    ) as Record<TimeSavedKind, number>,
+    dailyGoalMinutes: Number(draft['goal']),
+  };
+  const changed = JSON.stringify(parsed) !== JSON.stringify(saved);
+
+  const save = async (next: TimeSavedEstimates) => {
+    setBusy(true);
+    setDone(false);
+    try {
+      const r = await api.saveTimeSavedEstimates(next);
+      fill(r.estimates);
+      setDone(true);
+    } catch (e) {
+      onError((e as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card stack">
+      <h2>Time saved</h2>
+      <p className="hint">
+        Minutes each finished task saves against doing it by hand. The Time saved scoreboard counts
+        only work the platform records — an approved note, a signed report — and values it at these
+        figures. Changing them revalues past days too.
+      </p>
+      <div className="field-grid">
+        {TIME_SAVED_TASKS.map((t) => (
+          <div key={t.kind}>
+            <label htmlFor={`ts-${t.kind}`}>{t.label}</label>
+            <input
+              id={`ts-${t.kind}`}
+              type="number"
+              min={0}
+              max={240}
+              step={1}
+              inputMode="numeric"
+              value={draft[t.kind] ?? ''}
+              disabled={busy}
+              onChange={(e) => setDraft({ ...draft, [t.kind]: e.target.value })}
+            />
+            <p className="hint">Minutes for {t.counts}.</p>
+          </div>
+        ))}
+        <div>
+          <label htmlFor="ts-goal">Daily goal</label>
+          <input
+            id="ts-goal"
+            type="number"
+            min={1}
+            max={1440}
+            step={1}
+            inputMode="numeric"
+            value={draft['goal'] ?? ''}
+            disabled={busy}
+            onChange={(e) => setDraft({ ...draft, goal: e.target.value })}
+          />
+          <p className="hint">Minutes the clinic aims to bank each day.</p>
+        </div>
+      </div>
+      <div className="row">
+        <button className="primary" disabled={busy || !changed} onClick={() => save(parsed)}>
+          {busy ? 'Saving…' : 'Save estimates'}
+        </button>
+        <button
+          className="quiet"
+          disabled={busy || JSON.stringify(saved) === JSON.stringify(DEFAULT_TIME_SAVED)}
+          onClick={() => save(DEFAULT_TIME_SAVED)}
+        >
+          Restore defaults
+        </button>
+        {done && !changed && <span className="hint">Saved.</span>}
+      </div>
+    </section>
   );
 }
 

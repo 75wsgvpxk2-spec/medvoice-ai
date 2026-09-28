@@ -41,6 +41,7 @@ import { seed as seedDemoPopulation } from '../db/seed.ts';
 import * as runtime from '../lib/settings.ts';
 import * as thresholds from '../lib/thresholds.ts';
 import * as installation from '../lib/installation.ts';
+import * as timeSaved from '../lib/time-saved.ts';
 import * as automations from '../orchestration/automations.ts';
 import { describeThresholds, isThresholdName } from '../lib/thresholds.ts';
 import { TH, verifyReference } from '../clinical/reference.ts';
@@ -58,6 +59,7 @@ import { toFhirBundle, toMarkdown } from '../clinical/report.ts';
 import { assessMonitoring } from '../clinical/monitoring.ts';
 import { subscribe } from '../orchestration/events.ts';
 import { summariseSpend } from '../model/spend.ts';
+import * as assistant from '../agents/assistant.ts';
 import { db, id } from '../db/index.ts';
 import type {
   AutomationId,
@@ -107,8 +109,22 @@ const generalLimiter = rateLimit({
   message: { error: 'Too many requests. Slow down and try again shortly.' },
 });
 
+/*
+ * The assistant is the one route a clinician can hold down: it is a text box
+ * with a Send button in front of a paid model. The general limit of six
+ * hundred a minute is the wrong shape for it entirely.
+ */
+const assistantLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'That is a lot of questions at once. Wait a moment and ask again.' },
+});
+
 api.use(generalLimiter);
 api.use(['/auth/login', '/auth/signup', '/auth/password'], authLimiter);
+api.use('/assistant', assistantLimiter);
 // Mounted before every route, so no change can be added later that escapes it.
 api.use(auditTrail);
 
@@ -1647,6 +1663,69 @@ api.delete('/pronunciations/:id', requireClinician, (req: AuthedRequest, res) =>
   res.json({ ok: true });
 });
 
+/* ------------------------------------------------- clinical assistant --- */
+
+/**
+ * Ask about a patient, about the clinic's reference, or for next steps.
+ *
+ * The assistant reads the record back and explains it. It writes nothing: no
+ * order, no alert resolution, no status change, no note. That is deliberate
+ * and it is enforced here by there being no write path at all, not merely by
+ * asking the model nicely — a clinical action has to be taken by a clinician
+ * on a screen that says what it will do (§25).
+ *
+ * Rate limited alongside the other model-backed routes, because this is the
+ * one endpoint in the product a clinician can hold down.
+ */
+api.post('/assistant', requireClinician, async (req: AuthedRequest, res) => {
+  const body = req.body as { mode?: string; patientId?: string; question?: string };
+
+  const question = (body.question ?? '').trim();
+  if (!question) {
+    res.status(400).json({ error: 'Type a question first.' });
+    return;
+  }
+  if (question.length > 2000) {
+    res.status(400).json({ error: 'That question is too long. Shorten it to 2000 characters or fewer.' });
+    return;
+  }
+
+  const mode = body.mode;
+  if (mode !== 'patient' && mode !== 'research' && mode !== 'planning') {
+    res.status(400).json({ error: 'Choose patient, research or planning.' });
+    return;
+  }
+
+  let patientId: string | null = null;
+  if (body.patientId) {
+    // Same access boundary as every other patient route: the installation.
+    const patient = patients.byId(body.patientId);
+    if (!patient) {
+      res.status(404).json({ error: 'That patient is not in this clinic.' });
+      return;
+    }
+    patientId = patient.id;
+  }
+
+  if ((mode === 'patient' || mode === 'planning') && !patientId) {
+    res.status(400).json({
+      error: 'Choose a patient first — this mode answers from one patient\'s record.',
+    });
+    return;
+  }
+
+  try {
+    res.json(await assistant.ask({ mode, patientId, question }));
+  } catch (e) {
+    /*
+     * A model that is unreachable or unconfigured is reported, not hidden
+     * behind a cheerful non-answer. The assistant's own local engine covers
+     * the unconfigured case; anything that reaches here is a real failure.
+     */
+    res.status(502).json({ error: (e as Error).message });
+  }
+});
+
 /* --------------------------------------------------- clinical thresholds -- */
 
 api.get('/thresholds', requireClinician, (_req, res) => {
@@ -2543,6 +2622,49 @@ api.get('/audit', requireClinician, (req, res) => {
     // page nine still means this page cannot be trusted.
     integrity: audit.verify(),
   });
+});
+
+/* ----------------------------------------------------------- time saved -- */
+
+/** The widest window one request may ask for: three weeks, with room to spare. */
+const TIME_SAVED_MAX_DAYS = 62;
+
+/**
+ * Finished work in a window, with the estimates to value it.
+ *
+ * The client sends the window as instants because "today" is the clinic's
+ * today, not the server's — a clinic in Barbados and a server in Frankfurt
+ * disagree about when a day starts, and the person looking at the scoreboard
+ * is the one whose day it is.
+ */
+api.get('/time-saved', requireClinician, (req, res) => {
+  const from = new Date(String(req.query['from'] ?? ''));
+  const to = new Date(String(req.query['to'] ?? ''));
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+    res.status(400).json({ error: 'Give the window as from and to dates, with to after from.' });
+    return;
+  }
+  if (to.getTime() - from.getTime() > TIME_SAVED_MAX_DAYS * 86_400_000) {
+    res.status(400).json({ error: `Ask for ${TIME_SAVED_MAX_DAYS} days or fewer at a time.` });
+    return;
+  }
+  res.json({
+    items: timeSaved.activity(from.toISOString(), to.toISOString()),
+    estimates: timeSaved.estimates(),
+  });
+});
+
+api.get('/time-saved/estimates', requireClinician, (_req, res) => {
+  res.json({ estimates: timeSaved.estimates() });
+});
+
+api.put('/time-saved/estimates', requireClinician, requireAdmin, (req: AuthedRequest, res) => {
+  const result = timeSaved.saveEstimates(req.body, req.clinicianId!);
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  res.json({ estimates: result.estimates });
 });
 
 /* --------------------------------------------------------------- stream -- */
